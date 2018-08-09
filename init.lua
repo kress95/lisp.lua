@@ -450,7 +450,7 @@ local compile = (function()
    end
 
    local function call(form, depth)
-      return {form[1], '(', xprs(tail(form), depth + 1), ')'}
+      return {xpr(form[1]), '(', xprs(tail(form), depth + 1), ')'}
    end
 
    local function bin1(op)
@@ -584,13 +584,13 @@ local compile = (function()
          '(function(',
          args(form[2]),
          ')\n',
-         stms(tail(form, 2), depth),
+         stms(tail(form, 2), depth + 1),
          indent(depth - 1),
          'end)'
       }
    end
 
-   xprt['table'] = function(form, depth)
+   xprt.table = function(form, depth)
       local len = #form
       local buf = {'{\n'}
 
@@ -600,7 +600,7 @@ local compile = (function()
          local item = form[i]
 
          if getmetatable(item) ~= atom then
-            if atom.deref(item[1]) == 'g_g_3D' then
+            if atom.deref(item[1]) == 'kv' then
                local key = item[2]
                local val = item[3]
 
@@ -613,7 +613,12 @@ local compile = (function()
                   table.insert(buf, '] = ')
                end
 
-               table.insert(buf, xpr(val, depth + 1))
+               table.insert(buf, xpr(val, depth))
+            elseif atom.deref(item[1]) == 'xkv' then
+               table.insert(buf, '[')
+               table.insert(buf, xpr(item[2], depth + 1))
+               table.insert(buf, '] = ')
+               table.insert(buf, xpr(item[3], depth))
             else
                table.insert(buf, xpr(item, depth + 1))
             end
@@ -636,6 +641,21 @@ local compile = (function()
    xprt.g_g_2F = bin1(' / ')
    xprt.g_g_25 = bin1(' % ')
    xprt.g_g_5E = bin1(' ^ ')
+
+   function xprt.g_g_2E(form, depth)
+      local item = xpr(form[2], depth)
+      local key = xpr(form[3], depth)
+
+      if getmetatable(key) == atom and key.g_g_key then
+         return {item, '.', key}
+      else
+         return {item, '[', key, ']'}
+      end
+   end
+
+   function xprt.at(form, depth)
+      return {xpr(form[2], depth), '[', xpr(form[3], depth), ']'}
+   end
 
    function xprt.g_g_2E2E(form, depth)
       local first = form[2]
@@ -717,6 +737,9 @@ local compile = (function()
       return buf
    end
 
+   stmt.g_g_2E = xprt.g_g_2E
+   stmt.at = xprt.at
+
    stmt['do'] = function(form, depth)
       return {
          'do\n',
@@ -726,8 +749,12 @@ local compile = (function()
       }
    end
 
-   stmt['g_g_3D'] = function(form, depth)
-      return {stm(form[2]), ' = ', xprs(tail(form, 2), depth)}
+   function stmt.g_g_3D(form, depth)
+      if getmetatable(form[2]) == atom then
+         return {form[2], ' = ', xprs(tail(form, 2), depth)}
+      else
+         return {stm(form[2]), ' = ', xprs(tail(form, 2), depth)}
+      end
    end
 
    stmt['local'] = function(form, depth)
@@ -814,7 +841,7 @@ local compile = (function()
       end
    end
 
-   stmt['g_g_for2Din'] = function(form, depth)
+   function stmt.g_g_for2Din(form, depth)
       return {
          'for ',
          args(form[2]),
@@ -836,27 +863,22 @@ local compile = (function()
          stms(tail(form[2]), depth + 1),
       }
 
-      local last
       for i=3, len do
-         if atom.deref(form[i]) == 'else' then
-            last = i
-            break
+         table.insert(buf, indent(depth))
+
+         if i == len and atom.deref(form[i][1]) == 'else' then
+            table.insert(buf, 'else\n')
+         else
+            table.insert(buf, 'elseif ')
+            table.insert(buf, xpr(form[i][1], depth + 2))
+            table.insert(buf, ' then\n')
          end
 
-         table.insert(buf, indent(depth))
-         table.insert(buf, 'elseif ')
-         table.insert(buf, xpr(form[i][1], depth + 2))
-         table.insert(buf, ' then\n')
          table.insert(buf, stms(tail(form[i]), depth + 1))
       end
 
-      if last then
-         table.insert(buf, indent(depth))
-         table.insert(buf, 'else\n')
-         table.insert(buf, stms(tail(form, last), depth + 1))
-         table.insert(buf, indent(depth))
-         table.insert(buf, 'end')
-      end
+      table.insert(buf, indent(depth))
+      table.insert(buf, 'end')
 
       return buf
    end
