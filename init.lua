@@ -491,7 +491,7 @@ local compile = (function()
          end
 
          local len = #form
-         local buf = {}
+         local buf = {'('}
 
          table.insert(buf, xpr(left, depth))
          table.insert(buf, op)
@@ -501,6 +501,7 @@ local compile = (function()
             table.insert(buf, op)
             table.insert(buf, xpr(form[i], depth))
          end
+         table.insert(buf, ')')
 
          return buf
       end
@@ -618,7 +619,7 @@ local compile = (function()
                table.insert(buf, '[')
                table.insert(buf, xpr(item[2], depth + 1))
                table.insert(buf, '] = ')
-               table.insert(buf, xpr(item[3], depth))
+               table.insert(buf, xpr(item[3], depth + 1))
             else
                table.insert(buf, xpr(item, depth + 1))
             end
@@ -750,10 +751,12 @@ local compile = (function()
    end
 
    function stmt.g_g_3D(form, depth)
+      local rem = tail(form, 2)
+
       if getmetatable(form[2]) == atom then
-         return {form[2], ' = ', xprs(tail(form, 2), depth)}
+         return {form[2], ' = ', xprs(rem, depth)}
       else
-         return {stm(form[2]), ' = ', xprs(tail(form, 2), depth)}
+         return {stm(form[2], depth), ' = ', xprs(rem, depth)}
       end
    end
 
@@ -793,7 +796,13 @@ local compile = (function()
    end
 
    stmt['return'] = function(form, depth)
-      return {form[1], '(', xprs(tail(form), depth + 1), ')'}
+      local rem = tail(form)
+
+      if #rem > 0 then
+         return {form[1], '(', xprs(tail(form), depth + 1), ')'}
+      else
+         return form[1]
+      end
    end
 
    stmt['break'] = function(form, depth)
