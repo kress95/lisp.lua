@@ -799,7 +799,7 @@ local compile = (function()
       local rem = tail(form)
 
       if #rem > 0 then
-         return {form[1], '(', xprs(tail(form), depth + 1), ')'}
+         return {form[1], " ", xprs(tail(form), depth + 1)}
       else
          return form[1]
       end
