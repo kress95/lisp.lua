@@ -1,7 +1,18 @@
+;; blocks evil global get/set
+(setmetatable _G
+  {table
+    (kv __index
+        (function [_ k]
+          (error (.. "variable " k " is not declared") 2))
+     (kv __newindex
+         (function [_ k v]
+           (error (.. "declaring global " k " to " (tostring v)) 2))))})
+
 ;;;;
-;;;; global helpers
+;;;; helper functions
 ;;;;
 
+;;; prints using inspect (if available)
 (local puts)
 (do
   (= (local ok inspect) (pcall require "inspect"))
@@ -16,18 +27,6 @@
             (print item)
             (return item)))]))
 
-;; blocks evil global get/set
-(setmetatable _G
-  {table
-    (kv __index
-        (function [_ k]
-          (error (.. "variable " k " is not declared") 2))
-     (kv __newindex
-         (function [_ k v]
-           (error (.. "declaring global " k " to " (tostring v)) 2))))})
-
-;;;; functions
-
 ;;; throws a previously catched error
 (= (local error2)
    (function [msg lvl]
@@ -36,10 +35,70 @@
     (= lvl (+ (or lvl 1) 1))
     (error msg lvl)))
 
-;;; localized functions
+;;; try to turn a string into a valid lua identifier, may fail if the string
+;;; conflicts with a lua keyword
+(local to-identifier)
+(do
+  (= (local keywords)
+     {table (kv "and" true)
+            (kv "break" true)
+            (kv "do" true)
+            (kv "else" true)
+            (kv "elseif" true)
+            (kv "end" true)
+            (kv "false" true)
+            (kv "for" true)
+            (kv "function" true)
+            (kv "goto" true)
+            (kv "if" true)
+            (kv "in" true)
+            (kv "local" true)
+            (kv "nil" true)
+            (kv "not" true)
+            (kv "or" true)
+            (kv "repeat" true)
+            (kv "return" true)
+            (kv "then" true)
+            (kv "true" true)
+            (kv "until" true)
+            (kv "while" true)})
+
+  (= (local is-keyword)
+     (function [str] (return (== (at keywords str) true))))
+
+  (= (local capitalize)
+     (function [str] (return (string-gsub str "^%l" string-upper))))
+
+  (= (local pascalize)
+     (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
+
+  (= (local escape-char)
+     (function [char]
+      (return (string-lower (string-format "0x%X_" (string-byte char))))))
+
+  (= to-identifier
+     (function [str]
+       (if [(is-keyword str) (return false "is a keyword")])
+       (if [(string-find str "v4r_") (return false "is prefixed")])
+       (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
+       (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
+       (= str (string-gsub str "^%-" escape-char))
+       (= str (pascalize str))
+       (= str (string-gsub str "[^_%w]" escape-char))
+       (= str (.. "v4r_" str))
+       (return true str))))
+
+;;;;
+;;;; localized functions
+;;;;
+
 (= (local string-gsub) (. string gsub))
 (= (local string-sub) (. string sub))
 (= (local string-byte) (. string byte))
+(= (local string-find) (. string find))
+(= (local string-upper) (. string upper))
+(= (local string-lower) (. string lower))
+(= (local string-format) (. string format))
 (= (local table-concat) (. table concat))
 (= (local debug-getinfo) (. debug getinfo))
 (= (local io-open) (. io open))
@@ -207,8 +266,10 @@
 ;;;; immutable box type
 (local box-create-value
        box-create-atom
+       box-to-literal
        is-box
        box-is-atom
+       box-is-literal
        box-content
        box-srcmap)
 (do
@@ -226,7 +287,11 @@
   (= (local atom-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
-  ;; stores box's srcmap information
+  ;; stores box's literalness
+  (= (local literal-store)
+     (setmetatable {table} {table (kv __mode "k")}))
+
+  ;; stores box's srcmap informattion
   (= (local srcmap-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
@@ -251,6 +316,14 @@
       (= (at srcmap-store self) srcmap)
       (return self)))
 
+  ;;; box-to-literal
+  (= box-to-literal
+     (function [self]
+      (if [(box-is-atom self)
+           (= (at literal-store self) true)
+           (return self)]
+          [else (error "only atomic boxes can be literals")])))
+
   ;;;
   ;;; query
   ;;;
@@ -262,6 +335,10 @@
   ;;; box-is-atom
   (= box-is-atom
      (function [self] (return (== (at atom-store self) true))))
+
+  ;;; box-is-literal
+  (= box-is-literal
+     (function [self] (return (== (at literal-store self) true))))
 
   ;;; box-content
   (= box-content
@@ -500,7 +577,3 @@
    (function [any]
     (if [(is-box any) (return (box-content any))]
         [else (return any)])))
-
-;;;;
-;;;; compiler functions
-;;;;
