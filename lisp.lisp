@@ -40,20 +40,23 @@
 ;;; localized functions
 (= (local string-gsub) (. string gsub))
 (= (local string-sub) (. string sub))
+(= (local string-byte) (. string byte))
 (= (local table-concat) (. table concat))
 (= (local debug-getinfo) (. debug getinfo))
+(= (local io-open) (. io open))
+(= (local io-read) (. io read))
+(= (local io-close) (. io close))
 
 ;;;;
 ;;;; compiler types
 ;;;;
 
-;;;; srcmap type
-(local
-  srcmap-create
-  is-srcmap
-  srcmap-source
-  srcmap-line
-  srcmap-column)
+;;;; immutable srcmap type
+(local srcmap-create
+       is-srcmap
+       srcmap-source
+       srcmap-line
+       srcmap-column)
 (do
   (= (local srcmap) {table})
 
@@ -91,18 +94,17 @@
   (= srcmap-column
      (function [self] (return (at self column)))))
 
-;;;; list type
-(local
-  list-create-empty
-  list-create-with
-  list-cons
-  list-reverse
-  is-list
-  list-head
-  list-tail
-  list-split
-  list-to-table
-  list-unpack)
+;;;; immutable list type
+(local list-create-empty
+       list-create-with
+       list-cons
+       list-reverse
+       is-list
+       list-head
+       list-tail
+       list-split
+       list-to-table
+       list-unpack)
 (do
   (= (local list) {table})
 
@@ -203,14 +205,13 @@
       (= (at out (+ idx 1)) ")")
       (return (table-concat out "")))))
 
-;;;; box type
-(local
-  box-create-value
-  box-create-atom
-  is-box
-  box-is-atom
-  box-content
-  box-srcmap)
+;;;; immutable box type
+(local box-create-value
+       box-create-atom
+       is-box
+       box-is-atom
+       box-content
+       box-srcmap)
 (do
   (= (local box) {table})
 
@@ -282,17 +283,7 @@
           [(~= (at msg 1) nil) (error2 (at msg 1) 2)]
           [else (error "" 2)]))))
 
-;;;; any type
-(local any-content
-       any-srcmap)
-(do
-  ;;; any-content
-  (= any-content
-     (function [any]
-      (if [(is-box any) (return (box-content any))]
-          [else (return any)]))))
-
-;;;; form type
+;;;; immutable form type
 (local form-create
        form-map-open
        form-map-close
@@ -378,10 +369,138 @@
   (= (. form __tostring)
      (function [self] (return (tostring (. self list))))))
 
-(puts (any-content 1))
-;;;; stream type
-;(= (local stream) {table})
-;(do) ;TODO
+;;;; mutable stream type
+(local stream-create
+       stream-from-string
+       stream-from-file
+       is-stream
+       stream-move
+       stream-next)
+(do
+  (= (local stream) {table})
+
+  ;;;;
+  ;;;; build
+  ;;;;
+
+  ;;;; helpers
+
+  (= (local from-file)
+     (function [path]
+      (= (local file) (assert (io-open path "r")))
+      (= (local closed) false)
+      (return
+        (function []
+          (if [closed (return)])
+          (= (local char) (io-read file 1))
+          (if [char (return (string-byte char 1))]
+              [else
+               (io-close file)
+               (= closed true)]))
+        file)))
+
+  (= (local from-string)
+     (function [str]
+      (= (local idx) 0)
+      (= (local len) #str)
+      (return
+        (function []
+          (if [(>= idx len) (return)])
+          (= idx (+ idx 1))
+          (return (string-byte str idx))))))
+
+  ;;;; implementation
+
+  ;;; stream-create
+  (= stream-create
+     (function [get-char source]
+        (return (setmetatable {table (kv get-char get-char)
+                                     (kv source source)
+                                     (kv index 0)
+                                     (kv cache {table})
+                                     (kv cache-length 0)}
+                              stream))))
+
+  ;;; stream-from-file
+  (= stream-from-file
+     (function [path]
+      (= (local get-char file) (from-file path))
+      (return (stream-create get-char path) file)))
+
+  ;;; stream-from-string
+  (= stream-from-string
+     (function [str source]
+      (return (stream-create (from-string str) (or source "in-memory")))))
+
+  ;;;;
+  ;;;; query
+  ;;;;
+
+  ;;;; helpers
+
+  ;;; returns a new srcmap for the new character
+  (= (local get-srcmap)
+     (function [self char]
+      (= (local srcmap) (. (at (. self cache) (. self length)) srcmap))
+      (= (local line column) (or (. srcmap line) 0) (or (. srcmap column) 0))
+      (if [(== char 10)
+           (= line (+ line 1))
+           (= column 1)]
+          [(~= char 13)
+           (= column (+ column 1))])
+      (return (srcmap-create (. self source) line column))))
+
+  ;;; push following character to cache
+  (= (local push-char)
+     (function [self char]
+      (= (local length) (+ (. self cache-length) 1))
+      (= (local srcmap) (get-srcmap self char))
+      (= (local cached) {table (kv char char) (kv srcmap srcmap)})
+      (= (at (. self cache) length) cached)
+      (= (. self cache-length) length)
+      (= (. self index) length)
+      (return char srcmap)))
+
+  ;;;; implementation
+
+  ;;; is-stream
+  (= is-stream
+     (function [maybe-self]
+      (return (== (getmetatable maybe-self) stream))))
+
+  ;;; stream-move
+  (= stream-move
+     (function [self offset]
+      (= (local index) (+ (. self index) offset))
+      (if [(< index 0) (= index 0)]
+          [(> index length)
+           (= (local diff) (- index length))
+           (for [(i 1) diff] (stream-next self))])
+      (return self)))
+
+  ;;; stream-next
+  (= stream-next
+     (function [self]
+      (= (local index) (. self index))
+      (if [(< index (. self cache-length))
+           (= index (+ index 1))
+           (= (. self index) index)
+           (= (local cached) (at (. self cache) index))
+           (return (. cached char) (. cached srcmap))]
+          [else
+           (= (local char) ((. self get-char)))
+           (if [char (return (push-char self char))])])))
+
+  ;;; stream/__pairs
+  (= (. stream __pairs)
+     (function [self]
+      (return stream-next self))))
+
+;;;; any-content function
+(= (local any-content)
+   (function [any]
+    (if [(is-box any) (return (box-content any))]
+        [else (return any)])))
 
 ;;;;
 ;;;; compiler functions
