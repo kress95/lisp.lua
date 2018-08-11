@@ -290,16 +290,7 @@
   (= any-content
      (function [any]
       (if [(is-box any) (return (box-content any))]
-          [else (return any)])))
-
-  ;;; any-srcmap
-  (= any-srcmap
-     (function [any]
-      (if [(is-box any) (return (box-srcmap any))]
-          [else
-            (= (local inf) (debug-getinfo 2))
-            (= (local src) (string-sub (. inf source) 2))
-            (return (srcmap-create src (. inf currentline) (- 1)))]))))
+          [else (return any)]))))
 
 ;;;; form type
 (local form-create
@@ -387,7 +378,7 @@
   (= (. form __tostring)
      (function [self] (return (tostring (. self list))))))
 
-(puts (any-srcmap 1))
+(puts (any-content 1))
 ;;;; stream type
 ;(= (local stream) {table})
 ;(do) ;TODO
