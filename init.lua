@@ -741,6 +741,7 @@ local compile = (function()
    stmt.g_g_2E = xprt.g_g_2E
    stmt.at = xprt.at
 
+
    stmt['do'] = function(form, depth)
       return {
          'do\n',
@@ -762,6 +763,11 @@ local compile = (function()
 
    stmt['local'] = function(form, depth)
       return {'local ', args(tail(form))}
+   end
+
+   -- KILL ME LATER
+   stmt["many"] = function(form, depth)
+      return args(tail(form))
    end
 
    stmt['while'] = function(form, depth)
