@@ -95,6 +95,7 @@
 (= (local string-gsub) (. string gsub))
 (= (local string-sub) (. string sub))
 (= (local string-byte) (. string byte))
+(= (local string-char) (. string char))
 (= (local string-find) (. string find))
 (= (local string-upper) (. string upper))
 (= (local string-lower) (. string lower))
@@ -109,48 +110,80 @@
 ;;;; compiler types
 ;;;;
 
-;;;; immutable srcmap type
-(local srcmap-create
-       is-srcmap
-       srcmap-source
-       srcmap-line
-       srcmap-column)
+;;;; immutable sourcemap type
+(local sourcemap-create
+       sourcemap-merge
+       is-sourcemap
+       sourcemap-source
+       sourcemap-from-line
+       sourcemap-to-line
+       sourcemap-from-column
+       sourcemap-to-column)
 (do
-  (= (local srcmap) {table})
+  (= (local sourcemap) {table})
 
   ;;;;
   ;;;; build
   ;;;;
 
-  ;;; srcmap-create
-  (= srcmap-create
+  ;;; sourcemap-create
+  (= sourcemap-create
      (function [source line column]
       (return
         (setmetatable
           {table (kv source source)
-                 (kv line line)
-                 (kv column column)}
-          srcmap))))
+                 (kv from-line line)
+                 (kv to-line line)
+                 (kv from-column column)
+                 (kv to-column column)}
+          sourcemap))))
+
+  ;;; sourcemap-merge
+  (= sourcemap-merge
+     (function [sourcemap-from sourcemap-to]
+      ;; TODO: add validation
+      (= (local from-line from-column)
+         (sourcemap-from-line sourcemap-from)
+         (sourcemap-from-column sourcemap-from))
+      (= (local to-line to-column)
+         (sourcemap-to-line sourcemap-to)
+         (sourcemap-to-column sourcemap-to))
+      (return
+        (setmetatable
+          {table (kv source (sourcemap-source sourcemap))
+                 (kv from-line from-line)
+                 (kv to-line to-line)
+                 (kv from-column from-column)
+                 (kv to-column to-column)}
+          sourcemap))))
 
   ;;;;
   ;;;; query
   ;;;;
 
-  ;;; is-srcmap
-  (= is-srcmap
-     (function [maybe-self] (return (== (getmetatable maybe-self) srcmap))))
+  ;;; is-sourcemap
+  (= is-sourcemap
+     (function [maybe-self] (return (== (getmetatable maybe-self) sourcemap))))
 
-  ;;; srcmap-source
-  (= srcmap-source
-     (function [self] (return (at self source))))
+  ;;; sourcemap-source
+  (= sourcemap-source
+     (function [self] (return (. self source))))
 
-  ;;; srcmap-line
-  (= srcmap-line
-     (function [self] (return (at self line))))
+  ;;; sourcemap-from-line
+  (= sourcemap-from-line
+     (function [self] (return (. self from-line))))
 
-  ;;; srcmap-column
-  (= srcmap-column
-     (function [self] (return (at self column)))))
+  ;;; sourcemap-to-line
+  (= sourcemap-to-line
+     (function [self] (return (. self to-line))))
+
+  ;;; sourcemap-from-column
+  (= sourcemap-from-column
+     (function [self] (return (. self from-column))))
+
+  ;;; sourcemap-to-column
+  (= sourcemap-to-column
+     (function [self] (return (. self to-column)))))
 
 ;;;; immutable list type
 (local list-create-empty
@@ -271,7 +304,7 @@
        box-is-atom
        box-is-literal
        box-content
-       box-srcmap)
+       box-sourcemap)
 (do
   (= (local box) {table})
 
@@ -291,8 +324,8 @@
   (= (local literal-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
-  ;; stores box's srcmap informattion
-  (= (local srcmap-store)
+  ;; stores box's sourcemap informattion
+  (= (local sourcemap-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
   ;;;;
@@ -301,19 +334,19 @@
 
   ;;; box-create-value
   (= box-create-value
-     (function [value srcmap]
+     (function [value sourcemap]
       (= (local self) (setmetatable {table} box))
       (= (at content-store self) value)
-      (= (at srcmap-store self) srcmap)
+      (= (at sourcemap-store self) sourcemap)
       (return self)))
 
   ;;; box-create-atom
   (= box-create-atom
-     (function [value srcmap]
+     (function [value sourcemap]
       (= (local self) (setmetatable {table} box))
       (= (at content-store self) value)
       (= (at atom-store self) true)
-      (= (at srcmap-store self) srcmap)
+      (= (at sourcemap-store self) sourcemap)
       (return self)))
 
   ;;; box-to-literal
@@ -344,9 +377,9 @@
   (= box-content
      (function [self] (return (at content-store self))))
 
-  ;;; box-srcmap
-  (= box-srcmap
-     (function [self] (return (at srcmap-store self))))
+  ;;; box-sourcemap
+  (= box-sourcemap
+     (function [self] (return (at sourcemap-store self))))
 
   ;;; box-__tostring
   (= (. box __tostring)
@@ -423,15 +456,15 @@
 
   ;;; form-open
   (= form-open
-     (function [self] (return (at self open))))
+     (function [self] (return (. self open))))
 
   ;;; form-close
   (= form-close
-     (function [self] (return (at self close))))
+     (function [self] (return (. self close))))
 
   ;;; form-list
   (= form-list
-     (function [self] (return (at self list))))
+     (function [self] (return (. self list))))
 
   ;;; form/__len
   (= (. form __len)
@@ -478,7 +511,7 @@
   (= (local from-string)
      (function [str]
       (= (local idx) 0)
-      (= (local len) #str)
+      (= (local len) (# str))
       (return
         (function []
           (if [(>= idx len) (return)])
@@ -514,28 +547,35 @@
 
   ;;;; helpers
 
-  ;;; returns a new srcmap for the new character
-  (= (local get-srcmap)
+  ;;; returns last line/column for last cached entry
+  (= (local get-line-column)
+     (function [self]
+      (= (local cached) (at (. self cache) (. self length)))
+      (if [(not cached) (return 1 0)])
+      (= (local sourcemap) (. cached sourcemap))
+      (return (sourcemap-to-line sourcemap) (sourcemap-to-column  sourcemap))))
+
+  ;;; returns a new sourcemap for the new character
+  (= (local get-sourcemap)
      (function [self char]
-      (= (local srcmap) (. (at (. self cache) (. self length)) srcmap))
-      (= (local line column) (or (. srcmap line) 0) (or (. srcmap column) 0))
+      (= (local line column) (get-line-column self))
       (if [(== char 10)
            (= line (+ line 1))
            (= column 1)]
           [(~= char 13)
            (= column (+ column 1))])
-      (return (srcmap-create (. self source) line column))))
+      (return (sourcemap-create (. self source) line column))))
 
   ;;; push following character to cache
   (= (local push-char)
      (function [self char]
       (= (local length) (+ (. self cache-length) 1))
-      (= (local srcmap) (get-srcmap self char))
-      (= (local cached) {table (kv char char) (kv srcmap srcmap)})
+      (= (local sourcemap) (get-sourcemap self char))
+      (= (local cached) {table (kv char char) (kv sourcemap sourcemap)})
       (= (at (. self cache) length) cached)
       (= (. self cache-length) length)
       (= (. self index) length)
-      (return char srcmap)))
+      (return char sourcemap)))
 
   ;;;; implementation
 
@@ -548,6 +588,7 @@
   (= stream-move
      (function [self offset]
       (= (local index) (+ (. self index) offset))
+      (= (local length) (. self cache-length))
       (if [(< index 0) (= index 0)]
           [(> index length)
            (= (local diff) (- index length))
@@ -562,7 +603,7 @@
            (= index (+ index 1))
            (= (. self index) index)
            (= (local cached) (at (. self cache) index))
-           (return (. cached char) (. cached srcmap))]
+           (return (. cached char) (. cached sourcemap))]
           [else
            (= (local char) ((. self get-char)))
            (if [char (return (push-char self char))])])))
@@ -577,3 +618,197 @@
    (function [any]
     (if [(is-box any) (return (box-content any))]
         [else (return any)])))
+
+;;;;
+;;;; reader
+;;;;
+
+(= (local read)
+   (function [stream readtable]
+    (for-in [char sourcemap] [(pairs stream)]
+      (= (local reader) (at readtable char))
+
+      (if [reader
+           (= (local result) (reader readtable stream char sourcemap))
+           (if [result (return result)])]
+          [else
+            (= (local buf len) {table char} 1)
+            (= (local init) sourcemap)
+            (= (local term) sourcemap)
+            (for-in [char sourcemap] [(pairs stream)]
+              (if [(at readtable char)
+                   (stream-move stream -1)
+                   (break)])
+              (= len (+ len 1))
+              (= (at buf len) char)
+              (= term sourcemap))
+            (return
+              (box-create-atom
+                (string-char (unpack buf))
+                (sourcemap-merge init term)))]))))
+
+;;;;
+;;;; readtable
+;;;;
+
+(local readtable-create)
+(do
+  (= (local char-ht) 9)
+  (= (local char-lf) 10)
+  (= (local char-cr) 13)
+  (= (local char-space) 32)
+  (= (local char-quotation-mark) 34)
+  (= (local char-apostrophe) 39)
+  (= (local char-opened-parens) 40)
+  (= (local char-closed-parens) 41)
+  (= (local char-comma) 44)
+  (= (local char-hyphen) 45)
+  (= (local char-semicolon) 59)
+  (= (local char-at-sign) 64)
+  (= (local char-opened-brackets) 91)
+  (= (local char-backslash) 92)
+  (= (local char-closed-brackets) 93)
+  (= (local char-grave-accent) 96)
+  (= (local char-opened-braces) 123)
+  (= (local char-closed-braces) 125)
+
+  ;;;;
+  ;;;; build
+  ;;;;
+
+  ;;;; helpers
+
+  ;;; ignores a single char
+  (= (local ignore-char-reader) (function [] (return)))
+
+  ;;; ignores a chars until a newline
+  (= (local comment-reader)
+     (function [readtable stream char sourcemap]
+      (for-in [char] [(pairs stream)]
+        (if [(== char char-lf)
+             (stream-move stream (- 1))
+             (break)]))))
+
+  ;;; reads a negative number
+  ;; TODO: create the reader
+
+  ;;; reads a string
+
+  (= (local string-reader)
+     (function [readtable stream char sourcemap]
+      (= (local buf len) {table} 0)
+      (= (local prev) char-quotation-mark)
+      (= (local init) sourcemap)
+      (for-in [char term] [(pairs stream)]
+        (if [(and (== char char-quotation-mark) (~= prev char-backslash))
+             (return (box-create-value (string-char (unpack buf))
+                                       (sourcemap-merge init term)))])
+        (= len (+ len 1))
+        (= (at buf len) char)
+        (= prev char))
+      (error "wat")))
+
+  ;;; reads quote
+
+  ; (= (local quote-reader)
+  ;    (function [readtable stream char sourcemap]
+  ;     (= (local atom) (box-create-atom "quote" sourcemap))
+  ;     (= (local item) (read stream readtable))
+  ;     (= (local form) (form-create sourcemap))
+  ;     (= (local list) (form-list form))
+  ;     (list-create-with)
+  ;     (= (local list) (form-))
+  ;     (return)))
+  ;  local function quote(readtable, stream, char)
+  ;     local atom = new_atom('quote', true)
+  ;     local data = read(stream, readtable)
+  ;     return {atom, data}
+  ;  end
+
+  ;;; reads quasiquote
+
+  ;  local function quasiquote(readtable, stream, char)
+  ;     local atom = new_atom('quasiquote', true)
+  ;     local data = read(stream, readtable)
+  ;     return {atom, data}
+  ;  end
+
+  ;;; reads unquote and unquote-splicing
+
+  ;  local function unquote_and_unquote_splicing(readtable, stream, char)
+  ;     if stream() == 64 then
+  ;        local atom = new_atom('___unquote2Dsplicing', true)
+  ;        local data = read(stream, readtable)
+  ;        return {atom, data}
+  ;     else
+  ;        stream(-1)
+  ;        local atom = new_atom('unquote', true)
+  ;        local data = read(stream, readtable)
+  ;        return {atom, data}
+  ;     end
+  ;  end
+
+  ;;; returns a form reader for opened and closed forms
+
+  ;  local function form_for(open_char, close_char)
+  ;     return function(readtable, stream, char)
+  ;        local form = {}
+
+  ;        for char in stream do
+  ;           if char == close_char then
+  ;              return form
+  ;           else
+  ;              local reader = readtable[char]
+
+  ;              if reader then
+  ;                 local result = reader(readtable, stream, char)
+  ;                 if result then table.insert(form, result) end
+  ;              else
+  ;                 stream(-1)
+  ;                 table.insert(form, read(stream, readtable))
+  ;              end
+  ;           end
+  ;        end
+
+  ;        error('wtf expected close delim '  .. string.char(close_char))
+  ;     end
+  ;  end
+
+  ;  local function form_error_for(close_char)
+  ;     return function(readtable, stream, char)
+  ;        error('wtf unexpected close delim ' .. string.char(close_char))
+  ;     end
+  ;  end
+
+  ;;;; implementation
+
+  ;;; returns a readtable
+  (= readtable-create
+     (function []
+      (return
+        {table
+          (xkv char-ht ignore-char-reader)
+          (xkv char-lf ignore-char-reader)
+          (xkv char-cr ignore-char-reader)
+          (xkv char-space ignore-char-reader)
+          (xkv char-semicolon comment-reader)
+          (xkv char-opened-parens opened-parens-form-reader)
+          (xkv char-closed-parens closed-parens-form-reader)
+          (xkv char-opened-brackets opened-brackets-form-reader)
+          (xkv char-closed-brackets closed-brackets-form-reader)
+          (xkv char-opened-braces opened-braces-form-reader)
+          (xkv char-closed-braces closed-braces-form-reader)
+          (xkv char-quotation-mark string-reader)
+          (xkv char-apostrophe quote-reader)
+          (xkv char-grave-accent quasiquote-reader)
+          (xkv char-comma unquote-and-unquote-splicing-reader)}))))
+
+
+(= (local src) "nice")
+(= (local stream) (stream-from-string src))
+(= (local form) (read stream {table}))
+(print "---")
+(puts form)
+(puts (box-is-atom form))
+(puts (box-content form))
+
