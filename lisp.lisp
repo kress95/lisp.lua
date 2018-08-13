@@ -8,16 +8,23 @@
 ;; medium priority:
 ;;
 ;; - rename list to form
+;; - rename readtable to readers
 ;; - add transforms
 ;; - add quasiquote/unquote/unquote-splicing support
 ;; - add compatibility layer transform for luajit 5.1 mode
 ;;
-;; low priority
+;; low priority:
 ;;
 ;; - add 'everything is an expression' transform
 ;; - add sourcemapped error reporting for runtime
 ;; - break compatibility with `#` and `-` readers
 ;; - add a runtime library transform
+;;
+;; it will probably need 2kloc :T
+;;
+;; lua keywords:
+;; and break do else elseif end false for function goto if in local nil not
+;; or repeat return true until while then
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; blocks evil global get/set
@@ -215,6 +222,7 @@
        list-cons
        list-reverse
        is-list
+       list-is-empty
        list-head
        list-tail
        list-split
@@ -236,7 +244,7 @@
      (function [this ...]
       (if [(~= this nil)
            (return (setmetatable {table this (list-create-with ...)} list))]
-          [else (return (setmetatable {table this} list))])))
+          [else (return (setmetatable {table} list))])))
 
   ;;; list-cons
   (= list-cons
@@ -258,6 +266,11 @@
   ;;; is-list
   (= is-list
      (function [maybe-self] (return (== (getmetatable maybe-self) list))))
+
+  ;;; list/is-empty
+  (= list-is-empty
+     (function [self]
+      (return (and (== (at self 1) nil) (== (at self 2) nil)))))
 
   ;;; list-head
   (= list-head
@@ -650,7 +663,7 @@
         (= len (+ len 1))
         (= (at buf len) char)
         (= prev char))
-      (error "ERROR1")))
+      (error "unclosed string")))
 
   ;;; reads quote
 
@@ -699,10 +712,10 @@
                 [else
                  (stream-move stream (- 1))
                  (= form (list-cons (read stream readtable) form))]))
-          (error "ERROR2")))
+          (error "unmatched delimiter")))
       (= (local closed)
          (function [readtable stream char sourcemap]
-          (error "ERROR3")))
+          (error "unexpected delimiter")))
       (return opened closed)))
 
   (= (local opened-parens-form-reader closed-parens-form-reader)
@@ -753,99 +766,88 @@
     (return ast)))
 
 ;;;;
-;;;; expand form
+;;;; expander
 ;;;;
 
-(local expand-form)
+(local expand-once
+       expand)
 (do
-  (= expand-form
-     (function [form macrotable]
+  (= expand-once
+     (function [form macros]
       (= (local head) (list-head form))
-      (= (local tail) (list-tail form))
-      (if [(not (is-box head)) (return form)]) ; this should be an error
-      (if [(not (box-is-atom head)) (return form)]) ; this should be an error
-      (= (local atom) (box-content head))
-      (= (local macro) (at macrotable atom))
-      (if [(== macro nil) (return form)])
-      (return (macro macrotable form (list-unpack tail))))))
+      (if [(not (and (is-box head) (box-is-atom head)))
+           (return false form)])
+      (= (local macro) (at macros (box-content head)))
+      (= (local result changed?) form false)
+      (if [macro
+           (= result (macro (list-unpack (list-tail form))))
+           (= changed? true)])
+      (if [(not (is-list result)) (return changed? result)])
+      (= (local buf idx) {table} 0)
+      (for-in [tail head] [(pairs (list-tail result))]
+        (= idx (+ idx 1))
+        (= (local change? item) (expand-once head macros))
+        (= changed? (or changed? change?))
+        (= (at buf idx) item))
+      (return changed? (list-create-with (list-head result) (unpack buf)))))
+
+  (= expand
+     (function [dong macros]
+      (local changed?)
+      (repeat
+        (= (many changed? dong) (expand-once dong macros))
+       until (not changed?))
+      (return dong))))
 
 ;;;;
-;;;; macrotable
+;;;; transforms
 ;;;;
 
-(local macrotable-create)
+(local transforms-create)
+(do)
+
+;;;;
+;;;; code generator
+;;;;
+
+(local generate-code)
+(do)
+
+;;;;
+;;;; macros
+;;;;
+
+(local macros-create)
 (do
-  (= (local m-forwarder)
-     (function [_ ...]))
+  (= (local macro-wow)
+     (function [...]
+       (return (list-create-with (box-create-atom "waw") ...))))
 
-  (= (local m-single)
-     (function [_ ...]))
+  (= (local macro-waw)
+     (function [...]
+       (return (list-create-with (box-create-atom "do") ...))))
 
-  (= (local m-and)
-     (function [_ ...]))
-
-  (= (local m-or)
-     (function [_ ...]))
-
-  (= (local m-not)
-     (function [_ xpr ...]))
-
-  (= (local m-local)
-     (function [_ vars vals ...]))
-
-  ;;; (do body...) expands body
-  (= (local m-do)
-     (function [macrotable form ...]
-      (= (local body) {table ...})
-      (= (local len) (# body))
-      (for [(i 1) len] (= (at body i) (expand-form (at body i) macrotable)))
-      (return
-        (list-create-with
-          (box-to-literal (list-head form))
-          (unpack body)))))
-
-  (= (local m-if)
-     (function [_ ...]))
-
-  (= (local m-for)
-     (function [_ ...]))
-
-  (= (local m-for-in)
-     (function [_ ...]))
-
-  (= (local m-while)
-     (function [_ xpr ...]))
-
-  (= (local m-break)
-     (function [_]))
-
-  (= (local m-goto)
-     (function [_ label ...]))
-
-  (= (local m-label)
-     (function [_ name ...]))
-
-  (= (local m-function)
-     (function [_ params ...]))
-
-  (= (local m-return)
-     (function [_ ...]))
-
-  (= macrotable-create
+  (= macros-create
      (function []
       (return
         {table
-          (kv "do" m-do)}))))
+          (kv "wow" macro-wow)
+          (kv "waw" macro-waw)}))))
 
-(= (local source) "(do (print \"hello world\"))")
+
+;;;;
+;;;; compiler
+;;;;
+
+(local compile)
+(do)
+
+
+
+(= (local source) "(wow (print \"hello world\") (wow (print \"hello world\")))")
 (= (local stream) (stream-from-string source))
 (= (local readtable) (readtable-create))
-(= (local macrotable) (macrotable-create))
+(= (local macros) (macros-create))
 (= (local form) (read stream readtable))
-(= (local ex-form) (expand-form form macrotable))
 (print "old:" form)
-(print "new:" ex-form)
-
-;; keywords:
-;; and break do else elseif end false for function goto if in local nil not
-;; or repeat return true until while then
+(print "new:" (expand form macros))
