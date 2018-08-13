@@ -7,7 +7,6 @@
 ;;
 ;; medium priority:
 ;;
-;; - rename list to form
 ;; - add transforms
 ;; - add quasiquote/unquote/unquote-splicing support
 ;; - add compatibility layer transform for luajit 5.1 mode
@@ -215,46 +214,46 @@
   (= sourcemap-to-column
      (function [self] (return (. self to-column)))))
 
-;;;; immutable list type
-(local list-create-empty
-       list-create-with
-       list-cons
-       list-reverse
-       is-list
-       list-is-empty
-       list-head
-       list-tail
-       list-split
-       list-to-table
-       list-unpack)
+;;;; immutable form type
+(local form-create-empty
+       form-create-with
+       form-cons
+       form-reverse
+       is-form
+       form-is-empty
+       form-head
+       form-tail
+       form-split
+       form-to-table
+       form-unpack)
 (do
-  (= (local list) {table})
+  (= (local form) {table})
 
   ;;;;
   ;;;; build
   ;;;;
 
-  ;;; list-create-empty
-  (= list-create-empty
-     (function [] (return (setmetatable {table} list))))
+  ;;; form-create-empty
+  (= form-create-empty
+     (function [] (return (setmetatable {table} form))))
 
-  ;;; list-create-with
-  (= list-create-with
+  ;;; form-create-with
+  (= form-create-with
      (function [this ...]
       (if [(~= this nil)
-           (return (setmetatable {table this (list-create-with ...)} list))]
-          [else (return (setmetatable {table} list))])))
+           (return (setmetatable {table this (form-create-with ...)} form))]
+          [else (return (setmetatable {table} form))])))
 
-  ;;; list-cons
-  (= list-cons
-     (function [item other] (return (setmetatable {table item other} list))))
+  ;;; form-cons
+  (= form-cons
+     (function [item other] (return (setmetatable {table item other} form))))
 
-  ;;; list-reverse
-  (= list-reverse
+  ;;; form-reverse
+  (= form-reverse
      (function [self]
-      (= (local other) (list-create-empty))
+      (= (local other) (form-create-empty))
       (while (at self 2)
-        (= other (list-cons (at self 1) other))
+        (= other (form-cons (at self 1) other))
         (= self (at self 2)))
       (return other)))
 
@@ -262,25 +261,25 @@
   ;;;; query
   ;;;;
 
-  ;;; is-list
-  (= is-list
-     (function [maybe-self] (return (== (getmetatable maybe-self) list))))
+  ;;; is-form
+  (= is-form
+     (function [maybe-self] (return (== (getmetatable maybe-self) form))))
 
-  ;;; list/is-empty
-  (= list-is-empty
+  ;;; form/is-empty
+  (= form-is-empty
      (function [self]
       (return (and (== (at self 1) nil) (== (at self 2) nil)))))
 
-  ;;; list-head
-  (= list-head
+  ;;; form-head
+  (= form-head
      (function [self] (return (at self 1))))
 
-  ;;; list-tail
-  (= list-tail
+  ;;; form-tail
+  (= form-tail
      (function [self] (return (at self 2))))
 
-  ;;; list-split
-  (= list-split
+  ;;; form-split
+  (= form-split
      (function [self at]
       (= (local left idx right) {table} 0 self)
       (for-in [tail head] [(pairs self)]
@@ -288,10 +287,10 @@
         (= idx (+ idx 1))
         (= (at left idx) head)
         (= right tail))
-      (return (list-create-with (unpack left)) right)))
+      (return (form-create-with (unpack left)) right)))
 
-  ;;; list-to-table
-  (= list-to-table
+  ;;; form-to-table
+  (= form-to-table
      (function [self]
       (= (local arr idx) {table} 0)
       (while (at self 2)
@@ -300,12 +299,12 @@
         (= self (at self 2)))
       (return arr)))
 
-  ;;; list/unpack
-  (= list-unpack
-     (function [self] (return (unpack (list-to-table self)))))
+  ;;; form-unpack
+  (= form-unpack
+     (function [self] (return (unpack (form-to-table self)))))
 
-  ;;; list/__len
-  (= (. list __len)
+  ;;; form/__len
+  (= (. form __len)
      (function [self]
       (= (local len) 0)
       (while (at self 2)
@@ -313,14 +312,14 @@
         (= self (at self 2)))
       (return len)))
 
-  ;;; list/__pairs
+  ;;; form/__pairs
   (= (local next)
      (function [_ self] (if [self (return (at self 2) (at self 1))])))
-  (= (. list __pairs)
+  (= (. form __pairs)
      (function [self] (return next self self)))
 
-  ;;; list/__tostring
-  (= (. list __tostring)
+  ;;; form/__tostring
+  (= (. form __tostring)
      (function [self]
        (= (local out idx) {table "("} 1)
        (for-in [tail head] [(pairs self)]
@@ -670,7 +669,7 @@
      (function [readers stream char sourcemap]
       (= (local atom) (box-create-atom "quote" sourcemap))
       (= (local item) (read stream readers))
-      (return (list-create-with atom item))))
+      (return (form-create-with atom item))))
 
   ;;; reads quasiquote
 
@@ -678,7 +677,7 @@
      (function [readers stream char sourcemap]
       (= (local atom) (box-create-atom "quasiquote" sourcemap))
       (= (local item) (read stream readers))
-      (return (list-create-with atom item))))
+      (return (form-create-with atom item))))
 
   ;;; reads unquote and unquote-splicing
 
@@ -687,12 +686,12 @@
       (if [(== (stream-next stream) char-at-sign)
            (= (local atom) (box-create-atom "unquote-splicing" sourcemap))
            (= (local item) (read stream readers))
-           (return (list-create-with atom item))]
+           (return (form-create-with atom item))]
           [else
            (stream-move stream (- 1))
            (= (local atom) (box-create-atom "unquote" sourcemap))
            (= (local item) (read stream readers))
-           (return (list-create-with atom item))])))
+           (return (form-create-with atom item))])))
 
   ;;; returns a form reader for opened and closed forms
 
@@ -700,17 +699,17 @@
      (function [open-char close-char]
       (= (local opened)
          (function [readers stream char sourcemap]
-          (= (local form) (list-create-empty))
+          (= (local form) (form-create-empty))
           (for-in [char term] [(pairs stream)]
             (if [(== char close-char)
-                 (return (list-reverse form))])
+                 (return (form-reverse form))])
             (= (local reader) (at readers char))
             (if [reader
                  (= (local result) (reader readers stream char sourcemap))
-                 (if [(~= result nil) (= form (list-cons result form))])]
+                 (if [(~= result nil) (= form (form-cons result form))])]
                 [else
                  (stream-move stream (- 1))
-                 (= form (list-cons (read stream readers) form))]))
+                 (= form (form-cons (read stream readers) form))]))
           (error "unmatched delimiter")))
       (= (local closed)
          (function [readers stream char sourcemap]
@@ -773,22 +772,22 @@
 (do
   (= expand-once
      (function [form macros]
-      (= (local head) (list-head form))
+      (= (local head) (form-head form))
       (if [(not (and (is-box head) (box-is-atom head)))
            (return false form)])
       (= (local macro) (at macros (box-content head)))
       (= (local result changed?) form false)
       (if [macro
-           (= result (macro (list-unpack (list-tail form))))
+           (= result (macro (form-unpack (form-tail form))))
            (= changed? true)])
-      (if [(not (is-list result)) (return changed? result)])
+      (if [(not (is-form result)) (return changed? result)])
       (= (local buf idx) {table} 0)
-      (for-in [tail head] [(pairs (list-tail result))]
+      (for-in [tail head] [(pairs (form-tail result))]
         (= idx (+ idx 1))
         (= (local change? item) (expand-once head macros))
         (= changed? (or changed? change?))
         (= (at buf idx) item))
-      (return changed? (list-create-with (list-head result) (unpack buf)))))
+      (return changed? (form-create-with (form-head result) (unpack buf)))))
 
   (= expand
      (function [dong macros]
@@ -820,11 +819,11 @@
 (do
   (= (local macro-wow)
      (function [...]
-       (return (list-create-with (box-create-atom "waw") ...))))
+       (return (form-create-with (box-create-atom "waw") ...))))
 
   (= (local macro-waw)
      (function [...]
-       (return (list-create-with (box-create-atom "do") ...))))
+       (return (form-create-with (box-create-atom "do") ...))))
 
   (= macros-create
      (function []
