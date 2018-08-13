@@ -1,3 +1,24 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; high priority:
+;;
+;; - add error reporting
+;; - finish native lua macros
+;; - add codegen
+;;
+;; medium priority:
+;;
+;; - rename list to form
+;; - add transforms
+;; - add quasiquote/unquote/unquote-splicing support
+;; - add compatibility layer transform for luajit 5.1 mode
+;;
+;; low priority
+;; - add 'everything is an expression' transform
+;; - add sourcemapped error reporting for runtime
+;; - break compatibility with `#` and `-` readers
+;; - add a runtime library transform
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 ;; blocks evil global get/set
 (setmetatable _G
   {table
@@ -355,8 +376,10 @@
   (= box-to-literal
      (function [self]
       (if [(box-is-atom self)
-           (= (at literal-store self) true)
-           (return self)]
+           (= (local new-self)
+              (box-create-atom (box-content self) (box-sourcemap self)))
+           (= (at literal-store new-self) true)
+           (return new-self)]
           [else (error "only atomic boxes can be literals")])))
 
   ;;;
@@ -729,11 +752,99 @@
     (return ast)))
 
 ;;;;
-;;;; compiler
+;;;; expand form
 ;;;;
 
-(= (local src) "(hello-world)(hello-world)")
-(= (local stream) (stream-from-string src))
-(= (local ast) (parse stream (readtable-create)))
-(print "---")
-(print (unpack ast))
+(local expand-form)
+(do
+  (= expand-form
+     (function [form macrotable]
+      (= (local head) (list-head form))
+      (= (local tail) (list-tail form))
+      (if [(not (is-box head)) (return form)]) ; this should be an error
+      (if [(not (box-is-atom head)) (return form)]) ; this should be an error
+      (= (local atom) (box-content head))
+      (= (local macro) (at macrotable atom))
+      (if [(== macro nil) (return form)])
+      (return (macro macrotable form (list-unpack tail))))))
+
+;;;;
+;;;; macrotable
+;;;;
+
+(local macrotable-create)
+(do
+  (= (local m-forwarder)
+     (function [_ ...]))
+
+  (= (local m-single)
+     (function [_ ...]))
+
+  (= (local m-and)
+     (function [_ ...]))
+
+  (= (local m-or)
+     (function [_ ...]))
+
+  (= (local m-not)
+     (function [_ xpr ...]))
+
+  (= (local m-local)
+     (function [_ vars vals ...]))
+
+  ;;; (do body...) expands body
+  (= (local m-do)
+     (function [macrotable form ...]
+      (= (local body) {table ...})
+      (= (local len) (# body))
+      (for [(i 1) len] (= (at body i) (expand-form (at body i) macrotable)))
+      (return
+        (list-create-with
+          (box-to-literal (list-head form))
+          (unpack body)))))
+
+  (= (local m-if)
+     (function [_ ...]))
+
+  (= (local m-for)
+     (function [_ ...]))
+
+  (= (local m-for-in)
+     (function [_ ...]))
+
+  (= (local m-while)
+     (function [_ xpr ...]))
+
+  (= (local m-break)
+     (function [_]))
+
+  (= (local m-goto)
+     (function [_ label ...]))
+
+  (= (local m-label)
+     (function [_ name ...]))
+
+  (= (local m-function)
+     (function [_ params ...]))
+
+  (= (local m-return)
+     (function [_ ...]))
+
+  (= macrotable-create
+     (function []
+      (return
+        {table
+          (kv "do" m-do)}))))
+
+(= (local source) "(do (print \"hello world\"))")
+(= (local stream) (stream-from-string source))
+(= (local readtable) (readtable-create))
+(= (local macrotable) (macrotable-create))
+(= (local form) (read stream readtable))
+(= (local ex-form) (expand-form form macrotable))
+(print "old:" form)
+(print "new:" ex-form)
+
+;; keywords:
+;; and break do else elseif end false for function goto if in local nil not
+;; or repeat return true until while then
