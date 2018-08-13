@@ -9,6 +9,24 @@
            (error (.. "declaring global " k " to " (tostring v)) 2))))})
 
 ;;;;
+;;;; localized functions
+;;;;
+
+(= (local string-gsub) (. string gsub))
+(= (local string-sub) (. string sub))
+(= (local string-byte) (. string byte))
+(= (local string-char) (. string char))
+(= (local string-find) (. string find))
+(= (local string-upper) (. string upper))
+(= (local string-lower) (. string lower))
+(= (local string-format) (. string format))
+(= (local table-concat) (. table concat))
+(= (local debug-getinfo) (. debug getinfo))
+(= (local io-open) (. io open))
+(= (local io-read) (. io read))
+(= (local io-close) (. io close))
+
+;;;;
 ;;;; helper functions
 ;;;;
 
@@ -39,6 +57,30 @@
 ;;; conflicts with a lua keyword
 (local to-identifier)
 (do
+  (= (local capitalize)
+     (function [str] (return (string-gsub str "^%l" string-upper))))
+
+  (= (local pascalize)
+     (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
+
+  (= (local escape-char)
+     (function [char]
+      (return (string-lower (string-format "0x%X_" (string-byte char))))))
+
+  (= to-identifier
+     (function [str]
+       (if [(string-find str "v4r_") (return false "is prefixed")])
+       (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
+       (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
+       (= str (string-gsub str "^%-" escape-char))
+       (= str (pascalize str))
+       (= str (string-gsub str "[^_%w]" escape-char))
+       (= str (.. "v4r_" str))
+       (return true str))))
+
+;;; checks if a string is a keyword
+(local is-keyword)
+(do
   (= (local keywords)
      {table (kv "and" true)
             (kv "break" true)
@@ -58,53 +100,13 @@
             (kv "or" true)
             (kv "repeat" true)
             (kv "return" true)
-            (kv "then" true)
             (kv "true" true)
             (kv "until" true)
-            (kv "while" true)})
+            (kv "while" true)
+            (kv "then" true)})
 
-  (= (local is-keyword)
-     (function [str] (return (== (at keywords str) true))))
-
-  (= (local capitalize)
-     (function [str] (return (string-gsub str "^%l" string-upper))))
-
-  (= (local pascalize)
-     (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
-
-  (= (local escape-char)
-     (function [char]
-      (return (string-lower (string-format "0x%X_" (string-byte char))))))
-
-  (= to-identifier
-     (function [str]
-       (if [(is-keyword str) (return false "is a keyword")])
-       (if [(string-find str "v4r_") (return false "is prefixed")])
-       (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
-       (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
-       (= str (string-gsub str "^%-" escape-char))
-       (= str (pascalize str))
-       (= str (string-gsub str "[^_%w]" escape-char))
-       (= str (.. "v4r_" str))
-       (return true str))))
-
-;;;;
-;;;; localized functions
-;;;;
-
-(= (local string-gsub) (. string gsub))
-(= (local string-sub) (. string sub))
-(= (local string-byte) (. string byte))
-(= (local string-char) (. string char))
-(= (local string-find) (. string find))
-(= (local string-upper) (. string upper))
-(= (local string-lower) (. string lower))
-(= (local string-format) (. string format))
-(= (local table-concat) (. table concat))
-(= (local debug-getinfo) (. debug getinfo))
-(= (local io-open) (. io open))
-(= (local io-read) (. io read))
-(= (local io-close) (. io close))
+  (= is-keyword
+     (function [str] (return (== (at keywords str) true)))))
 
 ;;;;
 ;;;; compiler types
@@ -219,7 +221,7 @@
      (function [item other] (return (setmetatable {table item other} list))))
 
   ;;; list-reverse
-  (= list-set-reverse
+  (= list-reverse
      (function [self]
       (= (local other) (list-create-empty))
       (while (at self 2)
@@ -385,98 +387,15 @@
   (= (. box __tostring)
      (function [self]
       (= (local content) (at content-store self))
-      (= (local data) (pcall tostring content))
-      (= (local ok) (at data 1))
-      (= (local msg) (at data 1))
-      (if [ok (return msg)]
-          [(~= (at msg 1) nil) (error2 (at msg 1) 2)]
-          [else (error "" 2)]))))
-
-;;;; immutable form type
-(local form-create
-       form-map-open
-       form-map-close
-       form-map-list
-       is-form
-       form-open
-       form-close
-       form-list)
-(do
-  (= (local form) {table})
-
-  ;;;;
-  ;;;; build
-  ;;;;
-
-  ;;; form-create
-  (= form-create
-     (function [open]
-      (local list (list-create-empty))
-      (return (setmetatable {table (kv open open)
-                                   (kv close open)
-                                   (kv list list)}
-                            form))))
-
-  ;;;;
-  ;;;; map
-  ;;;;
-
-  ;;; form-map-open
-  (= form-map-open
-     (function [self open]
-      (return (setmetatable {table (kv open open)
-                                   (kv close (. self close))
-                                   (kv list (. self list))}
-                            form))))
-
-  ;;; form-map-close
-  (= form-open
-     (function [self close]
-      (return (setmetatable {table (kv open (. self open))
-                                   (kv close close)
-                                   (kv list (. self list))}
-                            form))))
-
-  ;;; form-map-list
-  (= form-map-list
-     (function [self list]
-      (return (setmetatable {table (kv open (. self open))
-                                   (kv close (. self close))
-                                   (kv list list)}
-                            form))))
-
-  ;;;;
-  ;;;; query
-  ;;;;
-
-  ;;; is-form
-  (= is-form
-     (function [maybe-self]
-      (return (== (getmetatable maybe-self) form))))
-
-  ;;; form-open
-  (= form-open
-     (function [self] (return (. self open))))
-
-  ;;; form-close
-  (= form-close
-     (function [self] (return (. self close))))
-
-  ;;; form-list
-  (= form-list
-     (function [self] (return (. self list))))
-
-  ;;; form/__len
-  (= (. form __len)
-     (function [self] (return (# (. self list)))))
-
-  ;;; form/__pairs
-  (= (. form __pairs)
-     (function [self] (return (pairs (. self list)))))
-
-  ;;; form/__tostring
-  (= (. form __tostring)
-     (function [self] (return (tostring (. self list))))))
+      (= (local ok msg) (pcall tostring content))
+      (if [(not ok) (error2 msg 2)])
+      (if [(box-is-literal self) (return msg)])
+      (if [(box-is-atom self)
+           (= (many ok msg) (to-identifier msg))
+           (if [(not ok) (error msg 2)])
+           (return msg)])
+      (if [(== (type content) "string") (return (.. "\"" msg "\""))]
+          [else (return msg)]))))
 
 ;;;; mutable stream type
 (local stream-create
@@ -589,10 +508,12 @@
      (function [self offset]
       (= (local index) (+ (. self index) offset))
       (= (local length) (. self cache-length))
-      (if [(< index 0) (= index 0)]
-          [(> index length)
+      (if [(> index length)
            (= (local diff) (- index length))
-           (for [(i 1) diff] (stream-next self))])
+           (for [(i 1) diff] (stream-next self))]
+          [else
+            (if [(< index 0) (= index 0)])
+            (= (. self index) index)])
       (return self)))
 
   ;;; stream-next
@@ -627,7 +548,6 @@
    (function [stream readtable]
     (for-in [char sourcemap] [(pairs stream)]
       (= (local reader) (at readtable char))
-
       (if [reader
            (= (local result) (reader readtable stream char sourcemap))
            (if [result (return result)])]
@@ -637,7 +557,7 @@
             (= (local term) sourcemap)
             (for-in [char sourcemap] [(pairs stream)]
               (if [(at readtable char)
-                   (stream-move stream -1)
+                   (stream-move stream (- 1))
                    (break)])
               (= len (+ len 1))
               (= (at buf len) char)
@@ -706,79 +626,69 @@
         (= len (+ len 1))
         (= (at buf len) char)
         (= prev char))
-      (error "wat")))
+      (error "ERROR1")))
 
   ;;; reads quote
 
-  ; (= (local quote-reader)
-  ;    (function [readtable stream char sourcemap]
-  ;     (= (local atom) (box-create-atom "quote" sourcemap))
-  ;     (= (local item) (read stream readtable))
-  ;     (= (local form) (form-create sourcemap))
-  ;     (= (local list) (form-list form))
-  ;     (list-create-with)
-  ;     (= (local list) (form-))
-  ;     (return)))
-  ;  local function quote(readtable, stream, char)
-  ;     local atom = new_atom('quote', true)
-  ;     local data = read(stream, readtable)
-  ;     return {atom, data}
-  ;  end
+  (= (local quote-reader)
+     (function [readtable stream char sourcemap]
+      (= (local atom) (box-create-atom "quote" sourcemap))
+      (= (local item) (read stream readtable))
+      (return (list-create-with atom item))))
 
   ;;; reads quasiquote
 
-  ;  local function quasiquote(readtable, stream, char)
-  ;     local atom = new_atom('quasiquote', true)
-  ;     local data = read(stream, readtable)
-  ;     return {atom, data}
-  ;  end
+  (= (local quasiquote-reader)
+     (function [readtable stream char sourcemap]
+      (= (local atom) (box-create-atom "quasiquote" sourcemap))
+      (= (local item) (read stream readtable))
+      (return (list-create-with atom item))))
 
   ;;; reads unquote and unquote-splicing
 
-  ;  local function unquote_and_unquote_splicing(readtable, stream, char)
-  ;     if stream() == 64 then
-  ;        local atom = new_atom('___unquote2Dsplicing', true)
-  ;        local data = read(stream, readtable)
-  ;        return {atom, data}
-  ;     else
-  ;        stream(-1)
-  ;        local atom = new_atom('unquote', true)
-  ;        local data = read(stream, readtable)
-  ;        return {atom, data}
-  ;     end
-  ;  end
+  (= (local unquote-and-unquote-splicing-reader)
+     (function [readtable stream char sourcemap]
+      (if [(== (stream-next stream) char-at-sign)
+           (= (local atom) (box-create-atom "unquote-splicing" sourcemap))
+           (= (local item) (read stream readtable))
+           (return (list-create-with atom item))]
+          [else
+           (stream-move stream (- 1))
+           (= (local atom) (box-create-atom "unquote" sourcemap))
+           (= (local item) (read stream readtable))
+           (return (list-create-with atom item))])))
 
   ;;; returns a form reader for opened and closed forms
 
-  ;  local function form_for(open_char, close_char)
-  ;     return function(readtable, stream, char)
-  ;        local form = {}
+  (= (local create-form-reader)
+     (function [open-char close-char]
+      (= (local opened)
+         (function [readtable stream char sourcemap]
+          (= (local form) (list-create-empty))
+          (for-in [char term] [(pairs stream)]
+            (if [(== char close-char)
+                 (return (list-reverse form))])
+            (= (local reader) (at readtable char))
+            (if [reader
+                 (= (local result) (reader readtable stream char sourcemap))
+                 (if [(~= result nil) (= form (list-cons result form))])]
+                [else
+                 (stream-move stream (- 1))
+                 (= form (list-cons (read stream readtable) form))]))
+          (error "ERROR2")))
+      (= (local closed)
+         (function [readtable stream char sourcemap]
+          (error "ERROR3")))
+      (return opened closed)))
 
-  ;        for char in stream do
-  ;           if char == close_char then
-  ;              return form
-  ;           else
-  ;              local reader = readtable[char]
+  (= (local opened-parens-form-reader closed-parens-form-reader)
+     (create-form-reader char-opened-parens char-closed-parens))
 
-  ;              if reader then
-  ;                 local result = reader(readtable, stream, char)
-  ;                 if result then table.insert(form, result) end
-  ;              else
-  ;                 stream(-1)
-  ;                 table.insert(form, read(stream, readtable))
-  ;              end
-  ;           end
-  ;        end
+  (= (local opened-brackets-form-reader closed-brackets-form-reader)
+     (create-form-reader char-opened-brackets char-closed-brackets))
 
-  ;        error('wtf expected close delim '  .. string.char(close_char))
-  ;     end
-  ;  end
-
-  ;  local function form_error_for(close_char)
-  ;     return function(readtable, stream, char)
-  ;        error('wtf unexpected close delim ' .. string.char(close_char))
-  ;     end
-  ;  end
+  (= (local opened-braces-form-reader closed-braces-form-reader)
+     (create-form-reader char-opened-braces char-closed-braces))
 
   ;;;; implementation
 
@@ -803,12 +713,8 @@
           (xkv char-grave-accent quasiquote-reader)
           (xkv char-comma unquote-and-unquote-splicing-reader)}))))
 
-
-(= (local src) "nice")
+(= (local src) "(hello-world)")
 (= (local stream) (stream-from-string src))
-(= (local form) (read stream {table}))
+(= (local form) (read stream (readtable-create)))
 (print "---")
-(puts form)
-(puts (box-is-atom form))
-(puts (box-content form))
-
+(print form)
