@@ -8,7 +8,6 @@
 ;; medium priority:
 ;;
 ;; - rename list to form
-;; - rename readtable to readers
 ;; - add transforms
 ;; - add quasiquote/unquote/unquote-splicing support
 ;; - add compatibility layer transform for luajit 5.1 mode
@@ -582,18 +581,18 @@
 ;;;;
 
 (= (local read)
-   (function [stream readtable]
+   (function [stream readers]
     (for-in [char sourcemap] [(pairs stream)]
-      (= (local reader) (at readtable char))
+      (= (local reader) (at readers char))
       (if [reader
-           (= (local result) (reader readtable stream char sourcemap))
+           (= (local result) (reader readers stream char sourcemap))
            (if [result (return result)])]
           [else
             (= (local buf len) {table char} 1)
             (= (local init) sourcemap)
             (= (local term) sourcemap)
             (for-in [char sourcemap] [(pairs stream)]
-              (if [(at readtable char)
+              (if [(at readers char)
                    (stream-move stream (- 1))
                    (break)])
               (= len (+ len 1))
@@ -605,10 +604,10 @@
                 (sourcemap-merge init term)))]))))
 
 ;;;;
-;;;; readtable
+;;;; readers
 ;;;;
 
-(local readtable-create)
+(local readers-create)
 (do
   (= (local char-ht) 9)
   (= (local char-lf) 10)
@@ -640,7 +639,7 @@
 
   ;;; ignores a chars until a newline
   (= (local comment-reader)
-     (function [readtable stream char sourcemap]
+     (function [readers stream char sourcemap]
       (for-in [char] [(pairs stream)]
         (if [(== char char-lf)
              (stream-move stream (- 1))
@@ -652,7 +651,7 @@
   ;;; reads a string
 
   (= (local string-reader)
-     (function [readtable stream char sourcemap]
+     (function [readers stream char sourcemap]
       (= (local buf len) {table} 0)
       (= (local prev) char-quotation-mark)
       (= (local init) sourcemap)
@@ -668,31 +667,31 @@
   ;;; reads quote
 
   (= (local quote-reader)
-     (function [readtable stream char sourcemap]
+     (function [readers stream char sourcemap]
       (= (local atom) (box-create-atom "quote" sourcemap))
-      (= (local item) (read stream readtable))
+      (= (local item) (read stream readers))
       (return (list-create-with atom item))))
 
   ;;; reads quasiquote
 
   (= (local quasiquote-reader)
-     (function [readtable stream char sourcemap]
+     (function [readers stream char sourcemap]
       (= (local atom) (box-create-atom "quasiquote" sourcemap))
-      (= (local item) (read stream readtable))
+      (= (local item) (read stream readers))
       (return (list-create-with atom item))))
 
   ;;; reads unquote and unquote-splicing
 
   (= (local unquote-and-unquote-splicing-reader)
-     (function [readtable stream char sourcemap]
+     (function [readers stream char sourcemap]
       (if [(== (stream-next stream) char-at-sign)
            (= (local atom) (box-create-atom "unquote-splicing" sourcemap))
-           (= (local item) (read stream readtable))
+           (= (local item) (read stream readers))
            (return (list-create-with atom item))]
           [else
            (stream-move stream (- 1))
            (= (local atom) (box-create-atom "unquote" sourcemap))
-           (= (local item) (read stream readtable))
+           (= (local item) (read stream readers))
            (return (list-create-with atom item))])))
 
   ;;; returns a form reader for opened and closed forms
@@ -700,21 +699,21 @@
   (= (local create-form-reader)
      (function [open-char close-char]
       (= (local opened)
-         (function [readtable stream char sourcemap]
+         (function [readers stream char sourcemap]
           (= (local form) (list-create-empty))
           (for-in [char term] [(pairs stream)]
             (if [(== char close-char)
                  (return (list-reverse form))])
-            (= (local reader) (at readtable char))
+            (= (local reader) (at readers char))
             (if [reader
-                 (= (local result) (reader readtable stream char sourcemap))
+                 (= (local result) (reader readers stream char sourcemap))
                  (if [(~= result nil) (= form (list-cons result form))])]
                 [else
                  (stream-move stream (- 1))
-                 (= form (list-cons (read stream readtable) form))]))
+                 (= form (list-cons (read stream readers) form))]))
           (error "unmatched delimiter")))
       (= (local closed)
-         (function [readtable stream char sourcemap]
+         (function [readers stream char sourcemap]
           (error "unexpected delimiter")))
       (return opened closed)))
 
@@ -729,8 +728,8 @@
 
   ;;;; implementation
 
-  ;;; returns a readtable
-  (= readtable-create
+  ;;; returns a readers table
+  (= readers-create
      (function []
       (return
         {table
@@ -755,10 +754,10 @@
 ;;;;
 
 (= (local parse)
-   (function [stream readtable]
+   (function [stream readers]
     (= (local ast len) {table} 0)
     (while true
-      (= (local item) (read stream readtable))
+      (= (local item) (read stream readers))
       (if [item
            (= len (+ len 1))
            (= (at ast len) item)]
@@ -846,8 +845,8 @@
 
 (= (local source) "(wow (print \"hello world\") (wow (print \"hello world\")))")
 (= (local stream) (stream-from-string source))
-(= (local readtable) (readtable-create))
+(= (local readers) (readers-create))
 (= (local macros) (macros-create))
-(= (local form) (read stream readtable))
+(= (local form) (read stream readers))
 (print "old:" form)
 (print "new:" (expand form macros))
