@@ -30,11 +30,11 @@
 (setmetatable _G
   {table
     (kv __index
-        (function [_ k]
-          (error (.. "variable " k " is not declared") 2))
+      (function [_ k]
+        (error (.. "variable " k " is not declared") 2))
      (kv __newindex
-         (function [_ k v]
-           (error (.. "declaring global " k " to " (tostring v)) 2))))})
+      (function [_ k v]
+        (error (.. "declaring global " k " to " (tostring v)) 2))))})
 
 ;;;;
 ;;;; localized functions
@@ -110,28 +110,29 @@
 (local is-keyword)
 (do
   (= (local keywords)
-     {table (kv "and" true)
-            (kv "break" true)
-            (kv "do" true)
-            (kv "else" true)
-            (kv "elseif" true)
-            (kv "end" true)
-            (kv "false" true)
-            (kv "for" true)
-            (kv "function" true)
-            (kv "goto" true)
-            (kv "if" true)
-            (kv "in" true)
-            (kv "local" true)
-            (kv "nil" true)
-            (kv "not" true)
-            (kv "or" true)
-            (kv "repeat" true)
-            (kv "return" true)
-            (kv "true" true)
-            (kv "until" true)
-            (kv "while" true)
-            (kv "then" true)})
+     {table
+      (kv "and" true)
+      (kv "break" true)
+      (kv "do" true)
+      (kv "else" true)
+      (kv "elseif" true)
+      (kv "end" true)
+      (kv "false" true)
+      (kv "for" true)
+      (kv "function" true)
+      (kv "goto" true)
+      (kv "if" true)
+      (kv "in" true)
+      (kv "local" true)
+      (kv "nil" true)
+      (kv "not" true)
+      (kv "or" true)
+      (kv "repeat" true)
+      (kv "return" true)
+      (kv "true" true)
+      (kv "until" true)
+      (kv "while" true)
+      (kv "then" true)})
 
   (= is-keyword
      (function [str] (return (== (at keywords str) true)))))
@@ -156,7 +157,6 @@
   ;;;; build
   ;;;;
 
-  ;;; sourcemap-create
   (= sourcemap-create
      (function [source line column]
       (return
@@ -168,7 +168,6 @@
                  (kv to-column column)}
           sourcemap))))
 
-  ;;; sourcemap-merge
   (= sourcemap-merge
      (function [sourcemap-from sourcemap-to]
       ;; TODO: add validation
@@ -191,27 +190,21 @@
   ;;;; query
   ;;;;
 
-  ;;; is-sourcemap
   (= is-sourcemap
      (function [maybe-self] (return (== (getmetatable maybe-self) sourcemap))))
 
-  ;;; sourcemap-source
   (= sourcemap-source
      (function [self] (return (. self source))))
 
-  ;;; sourcemap-from-line
   (= sourcemap-from-line
      (function [self] (return (. self from-line))))
 
-  ;;; sourcemap-to-line
   (= sourcemap-to-line
      (function [self] (return (. self to-line))))
 
-  ;;; sourcemap-from-column
   (= sourcemap-from-column
      (function [self] (return (. self from-column))))
 
-  ;;; sourcemap-to-column
   (= sourcemap-to-column
      (function [self] (return (. self to-column)))))
 
@@ -234,22 +227,18 @@
   ;;;; build
   ;;;;
 
-  ;;; form-create-empty
   (= form-create-empty
      (function [] (return (setmetatable {table} form))))
 
-  ;;; form-create-with
   (= form-create-with
      (function [this ...]
       (if [(~= this nil)
            (return (setmetatable {table this (form-create-with ...)} form))]
           [else (return (setmetatable {table} form))])))
 
-  ;;; form-cons
   (= form-cons
      (function [item other] (return (setmetatable {table item other} form))))
 
-  ;;; form-reverse
   (= form-reverse
      (function [self]
       (= (local other) (form-create-empty))
@@ -262,24 +251,26 @@
   ;;;; query
   ;;;;
 
-  ;;; is-form
+  ;;;; helpers
+
+  (= (local next)
+     (function [_ self] (if [self (return (at self 2) (at self 1))])))
+
+  ;;;; implementation
+
   (= is-form
      (function [maybe-self] (return (== (getmetatable maybe-self) form))))
 
-  ;;; form/is-empty
   (= form-is-empty
      (function [self]
       (return (and (== (at self 1) nil) (== (at self 2) nil)))))
 
-  ;;; form-head
   (= form-head
      (function [self] (return (at self 1))))
 
-  ;;; form-tail
   (= form-tail
      (function [self] (return (at self 2))))
 
-  ;;; form-split
   (= form-split
      (function [self at]
       (= (local left idx right) {table} 0 self)
@@ -290,7 +281,6 @@
         (= right tail))
       (return (form-create-with (unpack left)) right)))
 
-  ;;; form-to-table
   (= form-to-table
      (function [self]
       (= (local arr idx) {table} 0)
@@ -300,11 +290,9 @@
         (= self (at self 2)))
       (return arr)))
 
-  ;;; form-unpack
   (= form-unpack
      (function [self] (return (unpack (form-to-table self)))))
 
-  ;;; form/__len
   (= (. form __len)
      (function [self]
       (= (local len) 0)
@@ -313,9 +301,6 @@
         (= self (at self 2)))
       (return len)))
 
-  ;;; form/__pairs
-  (= (local next)
-     (function [_ self] (if [self (return (at self 2) (at self 1))])))
   (= (. form __pairs)
      (function [self] (return next self self)))
 
@@ -356,11 +341,11 @@
   (= (local atom-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
-  ;; stores box's literalness
+  ;; stores box's literalness (proposed for removal)
   (= (local literal-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
-  ;; stores box's sourcemap informattion
+  ;; stores box's sourcemap information
   (= (local sourcemap-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
@@ -368,7 +353,6 @@
   ;;;; build
   ;;;;
 
-  ;;; box-create-value
   (= box-create-value
      (function [value sourcemap]
       (= (local self) (setmetatable {table} box))
@@ -376,7 +360,6 @@
       (= (at sourcemap-store self) sourcemap)
       (return self)))
 
-  ;;; box-create-atom
   (= box-create-atom
      (function [value sourcemap]
       (= (local self) (setmetatable {table} box))
@@ -385,8 +368,7 @@
       (= (at sourcemap-store self) sourcemap)
       (return self)))
 
-  ;;; box-to-literal
-  (= box-to-literal
+  (= box-to-literal ; proposed for removal
      (function [self]
       (if [(box-is-atom self)
            (= (local new-self)
@@ -399,27 +381,21 @@
   ;;; query
   ;;;
 
-  ;;; is-box
   (= is-box
      (function [maybe-self] (return (== (getmetatable maybe-self) box))))
 
-  ;;; box-is-atom
   (= box-is-atom
      (function [self] (return (== (at atom-store self) true))))
 
-  ;;; box-is-literal
-  (= box-is-literal
+  (= box-is-literal ; proposed for removal
      (function [self] (return (== (at literal-store self) true))))
 
-  ;;; box-content
   (= box-content
      (function [self] (return (at content-store self))))
 
-  ;;; box-sourcemap
   (= box-sourcemap
      (function [self] (return (at sourcemap-store self))))
 
-  ;;; box-__tostring
   (= (. box __tostring)
      (function [self]
       (= (local content) (at content-store self))
@@ -475,7 +451,6 @@
 
   ;;;; implementation
 
-  ;;; stream-create
   (= stream-create
      (function [get-char source]
         (return (setmetatable {table (kv get-char get-char)
@@ -485,13 +460,11 @@
                                      (kv cache-length 0)}
                               stream))))
 
-  ;;; stream-from-file
   (= stream-from-file
      (function [path]
       (= (local get-char file) (from-file path))
       (return (stream-create get-char path) file)))
 
-  ;;; stream-from-string
   (= stream-from-string
      (function [str source]
       (return (stream-create (from-string str) (or source "in-memory")))))
@@ -534,12 +507,10 @@
 
   ;;;; implementation
 
-  ;;; is-stream
   (= is-stream
      (function [maybe-self]
       (return (== (getmetatable maybe-self) stream))))
 
-  ;;; stream-move
   (= stream-move
      (function [self offset]
       (= (local index) (+ (. self index) offset))
@@ -552,7 +523,6 @@
             (= (. self index) index)])
       (return self)))
 
-  ;;; stream-next
   (= stream-next
      (function [self]
       (= (local index) (. self index))
@@ -565,12 +535,11 @@
            (= (local char) ((. self get-char)))
            (if [char (return (push-char self char))])])))
 
-  ;;; stream/__pairs
   (= (. stream __pairs)
      (function [self]
       (return stream-next self))))
 
-;;;; any-content function
+;;; gets content of any type
 (= (local any-content)
    (function [any]
     (if [(is-box any) (return (box-content any))]
@@ -649,7 +618,6 @@
   ;; TODO: create the reader
 
   ;;; reads a string
-
   (= (local string-reader)
      (function [readers stream char sourcemap]
       (= (local buf len) {table} 0)
@@ -665,7 +633,6 @@
       (error "unclosed string")))
 
   ;;; reads quote
-
   (= (local quote-reader)
      (function [readers stream char sourcemap]
       (= (local atom) (box-create-atom "quote" sourcemap))
@@ -673,7 +640,6 @@
       (return (form-create-with atom item))))
 
   ;;; reads quasiquote
-
   (= (local quasiquote-reader)
      (function [readers stream char sourcemap]
       (= (local atom) (box-create-atom "quasiquote" sourcemap))
@@ -681,7 +647,6 @@
       (return (form-create-with atom item))))
 
   ;;; reads unquote and unquote-splicing
-
   (= (local unquote-and-unquote-splicing-reader)
      (function [readers stream char sourcemap]
       (if [(== (stream-next stream) char-at-sign)
@@ -694,8 +659,7 @@
            (= (local item) (read stream readers))
            (return (form-create-with atom item))])))
 
-  ;;; returns a form reader for opened and closed forms
-
+  ;;; returns readers for opened and closed forms
   (= (local create-form-reader)
      (function [open-char close-char]
       (= (local opened)
@@ -717,12 +681,15 @@
           (error "unexpected delimiter")))
       (return opened closed)))
 
+  ;; readers for parens
   (= (local opened-parens-form-reader closed-parens-form-reader)
      (create-form-reader char-opened-parens char-closed-parens))
 
+  ;; readers for brackets
   (= (local opened-brackets-form-reader closed-brackets-form-reader)
      (create-form-reader char-opened-brackets char-closed-brackets))
 
+  ;; readers for braces
   (= (local opened-braces-form-reader closed-braces-form-reader)
      (create-form-reader char-opened-braces char-closed-braces))
 
@@ -833,15 +800,12 @@
           (kv "wow" macro-wow)
           (kv "waw" macro-waw)}))))
 
-
 ;;;;
 ;;;; compiler
 ;;;;
 
 (local compile)
 (do)
-
-
 
 (= (local source) "(wow (print \"hello world\") (wow (print \"hello world\")))")
 (= (local stream) (stream-from-string source))
