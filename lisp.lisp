@@ -13,6 +13,7 @@
 ;;
 ;; low priority:
 ;;
+;; - find a better name for box
 ;; - add 'everything is an expression' transform
 ;; - add sourcemapped error reporting for runtime
 ;; - break compatibility with `#` and `-` readers
