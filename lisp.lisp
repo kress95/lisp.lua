@@ -2,7 +2,6 @@
 ;; high priority:
 ;;
 ;; - add error reporting
-;; - finish native lua macros
 ;; - add codegen
 ;;
 ;; medium priority:
@@ -770,21 +769,21 @@
 ;;;;
 
 (local transforms-create)
-(do)
+(do) ; TODO 3rd (will probably use 100loc)
 
 ;;;;
 ;;;; code generator
 ;;;;
 
 (local generate-code)
-(do)
+(do) ; TODO 1st (will probably use 1kloc)
 
 ;;;;
 ;;;; macros
 ;;;;
 
 (local macros-create)
-(do
+(do ; will probably use 100loc
   (= (local macro-wow)
      (function [...]
        (return (form-create-with (box-create-atom "waw") ...))))
@@ -805,7 +804,7 @@
 ;;;;
 
 (local compile)
-(do)
+(do) ; TODO 2nd
 
 (= (local source) "(wow (print \"hello world\") (wow (print \"hello world\")))")
 (= (local stream) (stream-from-string source))
