@@ -713,8 +713,27 @@
           (xkv char-grave-accent quasiquote-reader)
           (xkv char-comma unquote-and-unquote-splicing-reader)}))))
 
-(= (local src) "(hello-world)")
+;;;;
+;;;; parser
+;;;;
+
+(= (local parse)
+   (function [stream readtable]
+    (= (local ast len) {table} 0)
+    (while true
+      (= (local item) (read stream readtable))
+      (if [item
+           (= len (+ len 1))
+           (= (at ast len) item)]
+          [else (break)]))
+    (return ast)))
+
+;;;;
+;;;; compiler
+;;;;
+
+(= (local src) "(hello-world)(hello-world)")
 (= (local stream) (stream-from-string src))
-(= (local form) (read stream (readtable-create)))
+(= (local ast) (parse stream (readtable-create)))
 (print "---")
-(print form)
+(print (unpack ast))
