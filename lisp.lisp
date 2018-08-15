@@ -1,8 +1,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; high priority:
 ;;
-;; - add error reporting
 ;; - add codegen
+;; - add error reporting
 ;;
 ;; medium priority:
 ;;
@@ -19,10 +19,6 @@
 ;; - add a runtime library transform
 ;;
 ;; it will probably need 2kloc :T
-;;
-;; lua keywords:
-;; and break do else elseif end false for function goto if in local nil not
-;; or repeat return true until while then
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; blocks evil global get/set
@@ -80,31 +76,6 @@
     (= lvl (+ (or lvl 1) 1))
     (error msg lvl)))
 
-;;; try to turn a string into a valid lua identifier, may fail if the string
-;;; conflicts with a lua keyword
-(local to-identifier)
-(do
-  (= (local capitalize)
-     (function [str] (return (string-gsub str "^%l" string-upper))))
-
-  (= (local pascalize)
-     (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
-
-  (= (local escape-char)
-     (function [char]
-      (return (string-lower (string-format "0x%X_" (string-byte char))))))
-
-  (= to-identifier
-     (function [str]
-       (if [(string-find str "v4r_") (return false "is prefixed")])
-       (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
-       (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
-       (= str (string-gsub str "^%-" escape-char))
-       (= str (pascalize str))
-       (= str (string-gsub str "[^_%w]" escape-char))
-       (= str (.. "v4r_" str))
-       (return true str))))
-
 ;;; checks if a string is a keyword
 (local is-keyword)
 (do
@@ -135,6 +106,49 @@
 
   (= is-keyword
      (function [str] (return (== (at keywords str) true)))))
+
+;;; try to turn a string into a valid lua identifier, may fail if the string
+;;; conflicts with a lua keyword
+(local to-identifier)
+(do
+  (= (local capitalize)
+     (function [str] (return (string-gsub str "^%l" string-upper))))
+
+  (= (local pascalize)
+     (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
+
+  (= (local escape-char)
+     (function [char]
+      (return (string-lower (string-format "0x%X_" (string-byte char))))))
+
+  (= to-identifier
+     (function [str]
+       (if [(string-find str "v4r_") (return false "is prefixed")])
+       (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
+       (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
+       (= str (string-gsub str "^%-" escape-char))
+       (= str (pascalize str))
+       (= str (string-gsub str "[^_%w]" escape-char))
+       (= str (.. "v4r_" str))
+       (return true str))))
+
+;;; flattens a table
+(local flatten)
+(= flatten
+   (function [arr]
+    (= (local buf idx len) {table} 0 (# arr))
+    (for [(i 1) len]
+      (= (local item) (at arr i))
+      (if [(and (== (type item) "table") (== (getmetatable item) nil))
+           (= (local arr2) (flatten item))
+           (= (local len2) (# arr2))
+           (for [(i 1) len2]
+            (= idx (+ idx 1))
+            (= (at buf idx) (at arr2 i)))]
+          [else
+           (= idx (+ idx 1))
+           (= (at buf idx) item)]))
+    (return buf)))
 
 ;;;;
 ;;;; compiler types
@@ -340,7 +354,7 @@
   (= (local atom-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
-  ;; stores box's literalness (proposed for removal)
+  ;; stores box's literalness
   (= (local literal-store)
      (setmetatable {table} {table (kv __mode "k")}))
 
@@ -367,7 +381,7 @@
       (= (at sourcemap-store self) sourcemap)
       (return self)))
 
-  (= box-to-literal ; proposed for removal
+  (= box-to-literal
      (function [self]
       (if [(box-is-atom self)
            (= (local new-self)
@@ -384,9 +398,10 @@
      (function [maybe-self] (return (== (getmetatable maybe-self) box))))
 
   (= box-is-atom
-     (function [self] (return (== (at atom-store self) true))))
+     (function [self]
+      (return (and (is-box self) (== (at atom-store self) true)))))
 
-  (= box-is-literal ; proposed for removal
+  (= box-is-literal
      (function [self] (return (== (at literal-store self) true))))
 
   (= box-content
@@ -516,7 +531,7 @@
       (= (local length) (. self cache-length))
       (if [(> index length)
            (= (local diff) (- index length))
-           (for [(i 1) diff] (stream-next self))]
+           (for [(idx 1) diff] (stream-next self))]
           [else
             (if [(< index 0) (= index 0)])
             (= (. self index) index)])
@@ -721,27 +736,25 @@
 
 (= (local parse)
    (function [stream readers]
-    (= (local ast len) {table} 0)
+    (= (local form) (form-create-empty))
     (while true
       (= (local item) (read stream readers))
-      (if [item
-           (= len (+ len 1))
-           (= (at ast len) item)]
+      (if [item (= form (form-cons item form))]
           [else (break)]))
-    (return ast)))
+    (return form)))
 
 ;;;;
 ;;;; expander
 ;;;;
 
-(local expand-once
+(local expand-ap-once
+       expand-ap
        expand)
 (do
-  (= expand-once
+  (= expand-ap-once
      (function [form macros]
       (= (local head) (form-head form))
-      (if [(not (and (is-box head) (box-is-atom head)))
-           (return false form)])
+      (if [(not (is-box head)) (return false form)])
       (= (local macro) (at macros (box-content head)))
       (= (local result changed?) form false)
       (if [macro
@@ -751,18 +764,25 @@
       (= (local buf idx) {table} 0)
       (for-in [tail head] [(pairs (form-tail result))]
         (= idx (+ idx 1))
-        (= (local change? item) (expand-once head macros))
+        (= (local change? item) (expand-ap-once head macros))
         (= changed? (or changed? change?))
         (= (at buf idx) item))
       (return changed? (form-create-with (form-head result) (unpack buf)))))
 
-  (= expand
+  (= expand-ap
      (function [dong macros]
-      (local changed?)
+      (local expanded?)
       (repeat
-        (= (many changed? dong) (expand-once dong macros))
-       until (not changed?))
-      (return dong))))
+        (= (many expanded? dong) (expand-ap-once dong macros))
+       until (not expanded?))
+      (return dong)))
+
+  (= expand
+     (function [ast macros]
+      (= (local out) (form-create-empty))
+      (for-in [tail head] [(pairs ast)]
+        (= out (form-cons (expand-ap head macros) out)))
+      (return (form-reverse out)))))
 
 ;;;;
 ;;;; transforms
@@ -775,8 +795,270 @@
 ;;;; code generator
 ;;;;
 
-(local generate-code)
-(do) ; TODO 1st (will probably use 1kloc)
+(local codegen)
+(do
+  ;; identation sign
+  (= (local indent) {table})
+  ; (= (local indents) {table})
+
+  ; (for [(i 0) 999]
+  ;   (= (local step) {table})
+  ;   (for [(j 0) i] (= (at step j) indent))
+  ;   (= (at indents i) step))
+
+  ;;;; helpers
+
+  ; ;;; separate with commas
+  ; (= (local sep-with-commas)
+  ;    (function []
+  ;     (return ", ")))
+
+  ;;; separate with lines
+  (= (local sep-with-lines)
+     (function [depth]
+      (= (local out) {table "\n"})
+      (= depth (+ depth 1))
+      (for [(i 2) depth] (= (at out i) indent))
+      (return out)))
+
+  ; ;;; separate with lines and commas
+  ; (= (local sep-with-comma-and-lines)
+  ;    (function [depth]
+  ;     (= (local out) {table ",\n"})
+  ;     (= depth (+ depth 1))
+  ;     (for [(i 2) depth] (= (at out i) indent))
+  ;     (return out)))
+
+  ; ;;; concatenate atom form
+  ; (= (local concat-atom-form)
+  ;    (function [sep form depth]))
+
+  ;;; generated and concatenate form
+  (= (local concat-gen-form)
+     (function [gen sep forms depth]
+      (= (local out idx) {table} 0)
+      (for-in [tail head] [(pairs forms)]
+        (= (local result) (gen head depth))
+        (if [result
+             (= idx (+ idx 1))
+             (= (at out idx) result)
+             (if [(not (form-is-empty tail))
+                  (= idx (+ idx 1))
+                  (= (at out idx) (sep depth))])]))
+      (return out)))
+
+  ;; generic form generators
+  (local xpr stm tbl set)
+
+  ;;;; specific generators
+
+  (= (local gen-add)
+     (function [form depth] (print "gen-add is not implemented yet")))
+
+  (= (local gen-sub-unm)
+     (function [form depth] (print "gen-sub-unm is not implemented yet")))
+
+  (= (local gen-mul)
+     (function [form depth] (print "gen-mul is not implemented yet")))
+
+  (= (local gen-div)
+     (function [form depth] (print "gen-div is not implemented yet")))
+
+  (= (local gen-mod)
+     (function [form depth] (print "gen-mod is not implemented yet")))
+
+  (= (local gen-pow)
+     (function [form depth] (print "gen-pow is not implemented yet")))
+
+  (= (local gen-concat)
+     (function [form depth] (print "gen-concat is not implemented yet")))
+
+  (= (local gen-eq)
+     (function [form depth] (print "gen-eq is not implemented yet")))
+
+  (= (local gen-lt)
+     (function [form depth] (print "gen-lt is not implemented yet")))
+
+  (= (local gen-lt)
+     (function [form depth] (print "gen-lt is not implemented yet")))
+
+  (= (local gen-gt)
+     (function [form depth] (print "gen-gt is not implemented yet")))
+
+  (= (local gen-ge)
+     (function [form depth] (print "gen-ge is not implemented yet")))
+
+  (= (local gen-neq)
+     (function [form depth] (print "gen-neq is not implemented yet")))
+
+  (= (local gen-and)
+     (function [form depth] (print "gen-and is not implemented yet")))
+
+  (= (local gen-or)
+     (function [form depth] (print "gen-or is not implemented yet")))
+
+  (= (local gen-not)
+     (function [form depth] (print "gen-not is not implemented yet")))
+
+  (= (local gen-table)
+     (function [form depth] (print "gen-table is not implemented yet")))
+
+  (= (local gen-function)
+     (function [form depth] (print "gen-function is not implemented yet")))
+
+  (= (local gen-dot)
+     (function [form depth] (print "gen-dot is not implemented yet")))
+
+  (= (local gen-at)
+     (function [form depth] (print "gen-at is not implemented yet")))
+
+  (= (local gen-invoke)
+     (function [form depth] (print "gen-invoke is not implemented yet")))
+
+  (= (local gen-do)
+     (function [form depth]
+      (return
+        {table
+          (box-to-literal (form-head form))
+          (concat-gen-form stm sep-with-lines (form-tail form) (+ depth 1))
+          "end"})))
+
+  (= (local gen-set)
+     (function [form depth] (print "gen-set is not implemented yet")))
+
+  (= (local gen-local)
+     (function [form depth] (print "gen-local is not implemented yet")))
+
+  (= (local gen-return)
+     (function [form depth] (print "gen-return is not implemented yet")))
+
+  (= (local gen-while)
+     (function [form depth] (print "gen-while is not implemented yet")))
+
+  (= (local gen-repeat)
+     (function [form depth] (print "gen-repeat is not implemented yet")))
+
+  (= (local gen-break)
+     (function [form depth] (print "gen-break is not implemented yet")))
+
+  (= (local gen-label)
+     (function [form depth] (print "gen-label is not implemented yet")))
+
+  (= (local gen-goto)
+     (function [form depth] (print "gen-goto is not implemented yet")))
+
+  (= (local gen-for)
+     (function [form depth] (print "gen-for is not implemented yet")))
+
+  (= (local gen-for-in)
+     (function [form depth] (print "gen-for-in is not implemented yet")))
+
+  (= (local gen-if)
+     (function [form depth] (print "gen-if is not implemented yet")))
+
+  (= (local gen-kv)
+     (function [form depth] (print "gen-kv is not implemented yet")))
+
+  (= (local gen-xkv)
+     (function [form depth] (print "gen-xkv is not implemented yet")))
+
+  (= (local gen-comma)
+     (function [form depth] (print "gen-comma is not implemented yet")))
+
+  (= (local gen-call)
+     (function [form depth] (print "gen-call is not implemented yet")))
+
+  ;;;; generator scope
+
+  ;; expression scope
+  (= (local xpr-scope)
+     {table
+      (kv "+" gen-add)
+      (kv "-" gen-sub-unm)
+      (kv "*" gen-mul)
+      (kv "/" gen-div)
+      (kv "%" gen-mod)
+      (kv "^" gen-pow)
+      (kv ".." gen-concat)
+      (kv "==" gen-eq)
+      (kv "<" gen-lt)
+      (kv "<=" gen-lt)
+      (kv ">" gen-gt)
+      (kv ">=" gen-ge)
+      (kv "~=" gen-neq)
+      (kv "and" gen-and)
+      (kv "or" gen-or)
+      (kv "not" gen-not)
+      (kv "table" gen-table)
+      (kv "function" gen-function)
+      (kv "." gen-dot)
+      (kv "at" gen-at)
+      (kv ":" gen-invoke)})
+
+  ;; statement scope
+  (= (local stm-scope)
+     {table
+      (kv "do" gen-do)
+      (kv "=" gen-set)
+      (kv "local" gen-local)
+      (kv "return" gen-return)
+      (kv "while" gen-while)
+      (kv "repeat" gen-repeat)
+      (kv "break" gen-break)
+      (kv "label" gen-label)
+      (kv "goto" gen-goto)
+      (kv "for" gen-for)
+      (kv "for-in" gen-for-in)
+      (kv "if" gen-if)
+      (kv ":" gen-invoke)})
+
+  ;; table scope
+  (= (local tbl-scope)
+     {table
+      (kv "kv" gen-kv)
+      (kv "xkv" gen-xkv)})
+
+  ;; set scope
+  (= (local set-scope)
+     {table
+      (kv "local" gen-local)
+      (kv "many" gen-comma)})
+
+  (= (local fallback-to-gen-call)
+     (function [scope]
+      (return
+        (function [form depth]
+          (= (local head) (form-head form))
+          (if [(not (box-is-atom head)) (error "wtf not an atom")])
+          (= (local name) (box-content head))
+          (= (local generator) (at scope name))
+          (if [generator (return (generator form depth))]
+              [else (return (gen-call form depth))])))))
+
+  (= xpr (fallback-to-gen-call xpr-scope))
+  (= stm (fallback-to-gen-call stm-scope))
+
+  (= (local get-indent)
+     (function [size]
+      (= (local buf) {table})
+      (for [(i 1) size]
+        (= (at buf i) " "))
+      (return (table-concat buf ""))))
+
+  ;;;; implementation
+
+  (= codegen
+     (function [forms indent-size depth]
+      ;; TODO: generate sourcemap
+      (= (local indent-str) (get-indent (or indent-size 3)))
+      (= (local buf)
+         (flatten (concat-gen-form stm sep-with-lines forms (or depth 0))))
+      (= (local len) (# buf))
+      (for-in [i item] [(ipairs buf)]
+        (if [(is-box buf) (= (at buf i) (tostring item))]
+            [(== item indent) (= (at buf i) indent-str)]
+            [else (= (at buf i) (tostring item))]))
+      (return (table-concat buf "")))))
 
 ;;;;
 ;;;; macros
@@ -806,10 +1088,11 @@
 (local compile)
 (do) ; TODO 2nd
 
-(= (local source) "(wow (print \"hello world\") (wow (print \"hello world\")))")
+(= (local source) "(wow (print \"hello world\"))(wow (print \"hello world\"))")
 (= (local stream) (stream-from-string source))
 (= (local readers) (readers-create))
-(= (local macros) (macros-create))
-(= (local form) (read stream readers))
+(= (local form) (parse stream readers))
 (print "old:" form)
-(print "new:" (expand form macros))
+(= form (expand form (macros-create)))
+(print "exp:" form)
+(print (codegen form))
