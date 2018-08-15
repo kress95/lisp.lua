@@ -766,7 +766,7 @@ local compile = (function()
    end
 
    -- KILL ME LATER
-   stmt["many"] = function(form, depth)
+   stmt['many'] = function(form, depth)
       return args(tail(form))
    end
 
