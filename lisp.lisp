@@ -1,20 +1,27 @@
 ;;;; high priority:
 ;;;;
 ;;;; - add codegen
+;;;; - add transforms support
+;;;;   - symbol/symbol support
 ;;;; - add error reporting
+;;;; - finish bootstrapping
+;;;; - rename some special forms
+;;;;   - = -> set
+;;;;   - == -> =
+;;;;   - ~= -> !=
+;;;; - add compatibility for luajit 5.1
 ;;;;
 ;;;; medium priority:
 ;;;;
-;;;; - add translists
 ;;;; - add quasiquote/unquote/unquote-splicing support
-;;;; - add compatibility layer translist for luajit 5.1 mode
+;;;;   - this will probably involve adding some tranforms
+;;;; - add 'everything is an expression' transform
+;;;; - break compatibility with `#` and `-` readers
 ;;;;
 ;;;; low priority:
 ;;;;
-;;;; - add 'everything is an expression' translist
 ;;;; - add sourcemapped error reporting for runtime
-;;;; - break compatibility with `#` and `-` readers
-;;;; - add a runtime library translist
+;;;; - add a runtime library tranform
 ;;;;
 ;;;; it will probably need 2kloc :T
 
@@ -78,6 +85,73 @@
 
 ;;;; compiler types
 
+;;; immutable atom type, used to represent literals and values in s-expressions
+(local is-atom ; (any): bool
+       atom-create-value ; (a, num, num): atom a
+       atom-create-symbol ; (str, num, num): atom str
+       atom-is-symbol ; (atom a): bool
+       atom-is-value ; (atom a): bool
+       atom-content ; (atom a): a
+       atom-position ; (atom a): num, num
+       atom-to-string) ; (atom a): str
+(do
+  ;; stores available atoms
+  (= (local is-store) (setmetatable {table} {table (kv __mode "k")}))
+
+  ;;; returns true when the value is an atom
+  (= is-atom
+     (function [maybe-self] (return (== (at is-store maybe-self) true))))
+
+  ;;; creates an atom for a value
+  (= atom-create-value
+     (function [content from to]
+      (= (local self)
+         {table
+          false
+          content
+          from
+          to})
+      (= (at is-store self) true)
+      (return self)))
+
+  ;;; creates an atom for a symbol
+  (= atom-create-symbol
+     (function [content from to]
+      (= (local self)
+         {table
+          true
+          content
+          from
+          to})
+      (= (at is-store self) true)
+      (return self)))
+
+  ;;; returns true when the atom is a symbol
+  (= atom-is-symbol
+     (function [self]
+      (return (and (is-atom self) (at self 1)))))
+
+  ;;; returns true when the atom is an value
+  (= atom-is-value
+     (function [self]
+      (return (and (is-atom self) (not (at self 1))))))
+
+  ;;; returns atom content
+  (= atom-content
+     (function [self] (return (at self 2))))
+
+  ;;; returns atom position
+  (= atom-position
+     (function [self] (return (at self 3) (at self 4))))
+
+  ;;; returns atom string representation
+  (= atom-to-string
+     (function [self]
+      (= (local content) (atom-content self))
+      (if [(atom-is-symbol self) (return content)]
+          [(== (type content) "string") (return (.. "\"" content "\""))]
+          [else (return (tostring content))]))))
+
 ;;; immutable linked lists, metatables are allowed but will only affect the
 ;;; first cons cell
 (local is-list ; (any): bool
@@ -138,7 +212,7 @@
   ;;; returns true when the list is empty
   (= list-is-empty
     (function [self]
-      (return (== self empty))))
+      (return (== self empty-list))))
 
   ;;; returns list length
   (= list-length
@@ -196,81 +270,17 @@
   ;;; returns a string representation of the list
   (= list-to-string
      (function [self]
-      ;  (is-list self)
        (= (local out idx) {table "("} 1)
        (for-in [tail head] [(list-pairs self)]
         (= idx (+ idx 1))
         (if [(is-list head) (= (at out idx) (list-to-string head))]
-           [else (= (at out idx) (tostring head))])
+            [(is-atom head) (= (at out idx) (atom-to-string head))]
+            [else (= (at out idx) (tostring head))])
         (if [(at tail 2)
              (= idx (+ idx 1))
              (= (at out idx) " ")]))
       (= (at out (+ idx 1)) ")")
       (return (table-concat out "")))))
-
-;;; immutable atom type, used to represent literals and values in s-expressions
-(local is-atom ; (any): bool
-       atom-create-value ; (a, num, num): atom a
-       atom-create-symbol ; (str, num, num): atom str
-       atom-is-symbol ; (atom a): bool
-       atom-content ; (atom a): a
-       atom-position ; (atom a): num, num
-       atom-to-string) ; (atom a): str
-(do
-  ;; stores available atoms
-  (= (local is-store) (setmetatable {table} {table (kv __mode "k")}))
-
-  ;;; returns true when the value is an atom
-  (= is-atom
-     (function [maybe-self] (return (== (at is-store maybe-self) true))))
-
-  ;;; creates an atom for a value
-  (= atom-create-value
-     (function [content from to]
-      (= (local self)
-         {table
-          false
-          content
-          from
-          to})
-      (= (at is-store self) true)
-      (return self)))
-
-  ;;; creates an atom for a symbol
-  (= atom-create-symbol
-     (function [content from to]
-      (= (local self)
-         {table
-          true
-          content
-          from
-          to})
-      (= (at is-store self) true)
-      (return self)))
-
-  ;;; returns true when the atom is a symbol
-  (= atom-is-symbol
-     (function [self]
-      (return (and (is-atom self) (at self 1)))))
-
-  ;;; returns atom content
-  (= atom-content
-     (function [self] (return (at self 2))))
-
-  ;;; returns atom position
-  (= atom-position
-     (function [self] (return (at self 3) (at self 4))))
-
-  ;;; returns atom string representation
-  (= atom-to-string
-     (function [self]
-      (= (local content) (atom-content self))
-      (if [(atom-is-symbol self)
-           (= (local ok msg) (to-identifier content))
-           (if [(not ok) (error msg 2)]
-               [else (return msg)])]
-          [(== (type content) "string") (return (.. "\"" content "\""))]
-          [else (return (tostring content))]))))
 
 ;;; mutable code type used to dynamically read files,
 ;;; the source function must return lines
@@ -568,37 +578,284 @@
           (xkv char-comma unquote-and-unquote-splicing-reader)}))))
 
 ;;; performs one form expansion, doesn't expand sub forms
-(= (local expand-once) ; (list any, macros): bool, (list any | atom any)?
+(= (local expand) ; (list any, macros): bool, (list any | atom any)?
    (function [form macros]
     (= (local head) (list-head form))
-    (if [(not (atom-is-symbol head)) (return false form)])
+    (if [(not (is-atom head)) (error "trying to expand a lua value atom")])
+    (if [(atom-is-value head) (error "trying to expand a non-symbolic atom")])
     (= (local macro) (at macros (atom-content head)))
-    (if [macro (return true (macro (list-unpack (list-tail form))))])
-    (return false form)))
+    (if [(== macro nil) (return false form)])
+    (= (local dong) (macro form (list-unpack (list-tail form))))
+    (return (not (== dong form)) dong)))
 
-;;; fully expands the form, doesn't expand sub forms
-(= (local expand) ; (list any, macros): bool, (list any | atom any)?
-   (function [dong macros]
-    (= (local expanded-once? expanded?) false)
-    (repeat
-      (= (many expanded? dong) (expand-once dong macros))
-      (= expanded-once? (or expanded? expanded-once?))
-      until (not expanded?))
-    (return expanded-once? dong)))
+;;; generates code for given form, it's pretty dumb because macros already
+;;; perform validation
+(local codegen) ; (form, num?): str
+(do
+  ;;; converts string into a valid identifier, fails when the identifier is
+  ;;; prefixed with `v4r_'
+  (local to-identifier) ; (str): str
+  (do
+    (= (local capitalize)
+      (function [str] (return (string-gsub str "^%l" string-upper))))
 
-;;; fully expands the form and its sub forms (to be removed)
-(= (local expand-all) ; (list any, macros): bool, (list any | atom any)?
-   (function [form macros]
-    (= (local out) (list-create-empty))
-    (for-in [tail dong] [(list-pairs form)]
-      (= dong (expand dong macros))
-      (if [(is-list dong) (= dong (expand-all dong macros))])
-      (if [dong (= out (list-cons out dong))])
-     (return (list-reverse out)))))
-   ))
+    (= (local pascalize)
+      (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
 
-;;; generates code for given form
-(local codegen) ;
+    (= (local escape-char)
+      (function [char]
+        (return (string-lower (string-format "0x%X_" (string-byte char))))))
+
+    (= to-identifier
+      (function [str]
+        (if [(string-find str "v4r_") (return false "is prefixed")])
+        (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
+        (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
+        (= str (string-gsub str "^%-" escape-char))
+        (= str (pascalize str))
+        (= str (string-gsub str "[^_%w]" escape-char))
+        (= str (.. "v4r_" str))
+        (return true str))))
+
+  ;;; flattens a table one level, also useful for shallow copies
+  (= (local flatten) ; (table num (v | table num v)): table num v
+     (function [tbl]
+      (= (local out idx) {table} 0)
+      (for-in [n item] [(ipairs tbl)]
+        (if [(and (== (type item) "table") (not (is-atom item)))
+             (for-in [n item] [(ipairs item)]
+              (= idx (+ idx 1))
+              (= (at out idx) item))]
+            [else
+              (= idx (+ idx 1))
+              (= (at out idx) item)]))
+      (return out)))
+
+  ;; generator functions
+  (local gen-many gen-identity gen-expression gen-statement gen-table-item
+         gen-add gen-sub gen-mul gen-div gen-mod gen-pow gen-concat
+         gen-eq gen-neq gen-lt gen-le gen-gt gen-ge
+         gen-and gen-or gen-not
+         gen-unm gen-len
+         gen-parens
+         gen-table gen-kv gen-xkv gen-dot gen-at
+         gen-function gen-call gen-invoke
+         gen-local gen-set gen-comma
+         gen-do gen-if gen-return
+         gen-while gen-repeat gen-for gen-for-in gen-break
+         gen-label gen-goto)
+
+  ;; generator aggregators
+  (local expressions statements tables sets)
+
+  ;;; tries to generate each element of the list with given generator
+  (= gen-many ; (generator, str, list form, num): table num (atom | any)
+     (function [gen sep form depth]
+      (= (local out idx) {table} 0)
+      (for-in [tail head] [(list-pairs form)]
+        (= idx (+ idx 1))
+        (= (at out idx) (gen head depth))
+        (if [(not (list-is-empty tail))
+             (= idx (+ idx 1))
+             (= (at out idx) sep)]))
+      (return (flatten out))))
+
+  ;;; generates an expression
+  (= gen-identity ; (a, num): a
+     (function [form depth] (return form)))
+
+  ;;; generates an expression
+  (= gen-expression ; (list form, num): table num (atom | any)
+     (function [form depth]
+      (if [(not (is-list form)) (return form)])
+      (= (local head) (atom-content (list-head form)))
+      (= (local gen) (at expressions head))
+      (if [gen (return (gen form depth))])
+      (return (gen-call form depth))))
+
+  ;;; generates a statement
+  (= gen-statement ; (list form, num): table num (atom | any)
+     (function [form depth]
+      (puts form)
+      (print "-")
+      (= (local head) (atom-content (list-head form)))
+      (= (local gen) (at statements head))
+      (if [gen (return (gen form depth))])
+      (return (gen-call form depth))))
+
+  ;;; generates an table item
+  (= gen-table-item ; (list form, num): table num (atom | any)
+     (function [form depth]
+      (if [(not (is-list form)) (return form)])
+      (= (local head) (atom-content (list-head form)))
+      (= (local gen) (at tables head))
+      (if [gen (return (gen form depth))])
+      (return (gen-call form depth))))
+
+  ;;; returns a function to generate generic binary operators
+  (= (local gen-gen-bop) ; (str?): ((list form, num): table num (atom | any))
+     (function [operator separator]
+      (= separator (or separator " "))
+      (return
+        (function [form depth]
+          (= (local l o r)
+             (gen-expression (list-head (list-tail form)) depth)
+             (or operator (list-head form))
+             (gen-expression (list-head (list-tail (list-tail form))) depth))
+          (return (flatten {table "(" l separator o separator r ")"}))))))
+
+  ;;; returns a function to generate generic binary operators
+  (= (local gen-gen-uop) ; (str?): ((list form, num): table num (atom | any))
+     (function [separator operator]
+      (= separator (or separator " "))
+      (return
+        (function [form depth]
+          (= (local o r)
+             (or operator (list-head form))
+             (gen-expression (list-head (list-tail form)) depth))
+          (if [(not (is-atom r))
+               (= r (flatten {table "(" r ")"}))])
+          (return (flatten {table o separator r}))))))
+
+  ;;; operatiors
+  (= gen-add (gen-gen-bop))
+  (= gen-sub (gen-gen-bop))
+  (= gen-mul (gen-gen-bop))
+  (= gen-div (gen-gen-bop))
+  (= gen-mod (gen-gen-bop))
+  (= gen-pow (gen-gen-bop))
+  (= gen-concat (gen-gen-bop))
+  (= gen-eq (gen-gen-bop "=="))
+  (= gen-neq (gen-gen-bop "~="))
+  (= gen-lt (gen-gen-bop))
+  (= gen-le (gen-gen-bop))
+  (= gen-gt (gen-gen-bop))
+  (= gen-ge (gen-gen-bop))
+  (= gen-and (gen-gen-bop))
+  (= gen-or (gen-gen-bop))
+  (= gen-not (gen-gen-uop " "))
+  (= gen-unm (gen-gen-uop ""))
+  (= gen-len (gen-gen-uop ""))
+
+  (= gen-parens
+     (function [form depth]
+      (= (local x) (gen-expression (list-head (list-tail form)) depth))
+      (return (flatten {table "(" x ")"}))))
+
+  ;;; creates a table
+  (= gen-table ; (list form, num): table num (atom | any)
+      (function [form depth]
+       (= (local i) (gen-many gen-table-item ", " (list-tail form) depth))
+       (return (flatten {table "{" i "}"}))))
+
+  ;;; creates a table field from symbol
+  (= gen-kv ; (list form, num): table num (atom | any)
+      (function [form depth]
+        (= (local k v)
+           (list-head (list-tail form))
+           (gen-expression (list-head (list-tail (list-tail form))) depth))
+        (return (flatten {table k " = " v}))))
+
+  ;;; creates a table field from expression
+  (= gen-xkv ; (list form, num): table num (atom | any)
+      (function [form depth]
+        (= (local k v)
+           (gen-expression (list-head (list-tail form)) depth)
+           (gen-expression (list-head (list-tail (list-tail form))) depth))
+        (return (flatten {table "[" k "] = " v}))))
+
+  ;;; access table field with symbol
+  (= gen-dot ; (list form, num): table num (atom | any)
+      (function [form depth]
+       (= (local l p)
+          (gen-expression (list-head (list-tail form)) depth)
+          (list-head (list-tail (list-tail form))))
+       (return (flatten {table l "." p}))))
+
+  ;;; access table field with value
+  (= gen-at ; (list form, num): table num (atom | any)
+      (function [form depth]
+       (= (local l p)
+          (gen-expression (list-head (list-tail form)) depth)
+          (gen-expression (list-head (list-tail (list-tail form))) depth))
+       (return (flatten {table l "[" p "]"}))))
+
+  ;;; creates a function
+  (= gen-function ; (list form, num): table num (atom | any)
+     (function [form depth]
+      (= (local p b)
+         (gen-many gen-identity
+                   ", "
+                   (list-head (list-tail form))
+                   depth)
+         (gen-many gen-statement
+                   "\n"
+                   (list-tail (list-tail form))
+                   depth))
+      (return (flatten {table "function(" p ")\n" b "\nend"}))))
+
+  ;;; plain function calls
+  (= gen-call ; (list form, num): table num (atom | any)
+     (function [form depth]
+       (= (local l p)
+          (gen-expression (list-head form) depth)
+          (gen-many gen-expression ", " (list-tail form) depth))
+       (return (flatten {table l "(" p ")"}))))
+
+  ;;; invoke table methods
+  (= gen-invoke ; (list form, num): table num (atom | any)
+      (function [form depth]
+       (= (local x m p)
+          (gen-expression (list-head (list-tail form)) depth)
+          (list-head (list-tail (list-tail form)))
+          (gen-many gen-expression ", " (list-tail (list-tail form)) depth))
+       (return (flatten {table x ":" m "(" p ")"}))))
+
+  ;; valid expressions
+  (= expressions
+     {table (kv "+" gen-add) (kv "-" gen-sub) (kv "*" gen-mul) (kv "/" gen-div)
+            (kv "%" gen-mod) (kv "^" gen-pow) (kv ".." gen-concat)
+            (kv "==" gen-eq) (kv "~=" gen-neq) (kv "<" gen-lt) (kv "<=" gen-le)
+            (kv ">" gen-gt) (kv ">=" gen-ge) (kv "and" gen-and)
+            (kv "or" gen-or) (kv "not" gen-not) (kv "--" gen-unm)
+            (kv "#" gen-len) (kv "parens" gen-parens) (kv "table" gen-table)
+            (kv "." gen-dot) (kv "at" gen-at) (kv "function" gen-function)
+            (kv ":" gen-invoke)})
+
+  ;; valid statements
+  (= statements
+     {table (kv "local" gen-local) (kv "=" gen-set) (kv "do" gen-do)
+            (kv "if" gen-if) (kv "return" gen-return) (kv "while" gen-while)
+            (kv "repeat" gen-repeat) (kv "for" gen-for)
+            (kv "for-in" gen-for-in) (kv "break" gen-break)
+            (kv "label" gen-label) (kv "goto" gen-goto)})
+
+  ;; table specific forms, basically any expression plus kv/xkv
+  (= tables
+     {table (kv "+" gen-add) (kv "-" gen-sub) (kv "*" gen-mul) (kv "/" gen-div)
+            (kv "%" gen-mod) (kv "^" gen-pow) (kv ".." gen-concat)
+            (kv "==" gen-eq) (kv "~=" gen-neq) (kv "<" gen-lt) (kv "<=" gen-le)
+            (kv ">" gen-gt) (kv ">=" gen-ge) (kv "and" gen-and)
+            (kv "or" gen-or) (kv "not" gen-not) (kv "--" gen-unm)
+            (kv "#" gen-len) (kv "parens" gen-parens) (kv "table" gen-table)
+            (kv "." gen-dot) (kv "at" gen-at) (kv "function" gen-function)
+            (kv ":" gen-invoke) (kv "kv" gen-kv) (kv "xkv" gen-xkv)})
+
+  ;; set specific forms
+  (= sets
+     {table (kv "local" gen-local) (kv "many" gen-comma)})
+
+  (= codegen
+    (function [form depth]
+     (= (local got) (gen-statement form (or depth 1)))
+     (= (local out) {table})
+     (for-in [n item] [(ipairs got)]
+       (if [(is-atom item) (= (at out n) (atom-to-string item))]
+           [else (= (at out n) (tostring item))]))
+     (return (table-concat out "")))))
+
+;;; returns a macros table with default macros
+(local macros-create) ; (): macros
 (do
   ;;; returns true if string matches with a keyword
   (local is-keyword) ; (str): bool
@@ -631,55 +888,53 @@
     (= is-keyword
       (function [str] (return (== (at keywords str) true)))))
 
-  ;;; converts string into a valid identifier, fails when the identifier is
-  ;;; prefixed with `v4r_'
-  (local to-identifier) ; (str): str
-  (do
-    (= (local capitalize)
-      (function [str] (return (string-gsub str "^%l" string-upper))))
-
-    (= (local pascalize)
-      (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
-
-    (= (local escape-char)
-      (function [char]
-        (return (string-lower (string-format "0x%X_" (string-byte char))))))
-
-    (= to-identifier
-      (function [str]
-        (if [(string-find str "v4r_") (return false "is prefixed")])
-        (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
-        (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
-        (= str (string-gsub str "^%-" escape-char))
-        (= str (pascalize str))
-        (= str (string-gsub str "[^_%w]" escape-char))
-        (= str (.. "v4r_" str))
-        (return true str)))))
-
-;;; returns a macros table with default macros
-(local macros-create) ; (): macros
-(do)
+  (= macros-create
+     (function []
+      (return {table}))))
 
 ;;; applies transforms to the source code
 (= (local transform)
-   (function [form transforms]))
+   (function [form transforms]
+    ;;; TODO
+    (return form)))
 
-;;; returns a transforms array with default transforms
-(local transforms-create) ; (): transforms
-(do)
+;;; returns a transforms array with default transforms for pre expansion phase
+(local transforms-before-create) ; (): transforms
+(do
+  (= transforms-before-create
+     (function []
+      (return {table}))))
+
+;;; returns a transforms array with default transforms for post expansion phase
+(local transforms-after-create) ; (): transforms
+(do
+  (= transforms-after-create
+     (function []
+      (return {table}))))
 
 ;;; compiles a stream
 (= (local compile-code) ; (code, opts): nil
-   (function [output code opts]
-    (= (local readers macros transforms)
-       (or (. opts readers) (readers-create))
-       (or (. opts macros) (macros-create))
-       (or (. opts transforms)) (transforms-create))
+   (function [code output opts]
+    (= (local readers macros transforms-before transforms-after)
+       (or (and opts (. opts readers)) (readers-create))
+       (or (and opts (. opts macros)) (macros-create))
+       (or (and opts (. opts transforms-before)) (transforms-before-create))
+       (or (and opts (. opts transforms-after)) (transforms-after-create)))
+    (while true
+      (= (local form expanded?) (read code readers) false)
+      (if [(== form nil) (break)])
+      (= form (transform form transforms-before))
+      (if [(== form nil) (goto skip)])
+      (repeat
+        (= (many expanded? form) (expand form macros))
+        (if [(== form nil) (goto skip)])
+        (if [expanded?
+             (= form (transform form transforms-after))
+             (if [(== form nil) (goto skip)])])
+       until (not expanded?))
+      (output (codegen form))
+      (label skip))))
 
-    (repeat
-      (= (local form) (read code readers))
-      (= (local halt) (== form nil))
-      (if [form (= form (expand-all form macros))])
-      (if [form (= form (transform form transforms))])
-      (if [form (output (codegen form))])
-    until halt)))
+(= (local str) "(print (function [a b c] (print a)))")
+(= (local code) (code-from-string str))
+(compile-code code print)
