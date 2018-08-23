@@ -631,6 +631,48 @@
               (= (at out idx) item)]))
       (return out)))
 
+  ;;; returns indentation for given depth
+  (local indent) ; (num): str
+  (do
+    (= (local store) (setmetatable {table} {table (kv __mode "v")}))
+
+    (= indent
+       (function [depth]
+        (if [(< depth 0) (= depth 0)])
+        (= (local got) (at store depth))
+        (if [got (return depth)])
+        (= got (string-rep "   " depth))
+        (= (at store depth) got)
+        (return got))))
+
+  ;;; returns a function to generate generic binary operators
+  (= (local binary-op) ; (str?): ((list form, num): table num (atom | any))
+     (function [operator separator]
+      (= separator (or separator " "))
+      (return
+        (function [form depth]
+          (= (local l o r)
+             (gen-expression (list-head (list-tail form)) depth)
+             (or operator (list-head form))
+             (gen-expression (list-head (list-tail (list-tail form))) depth))
+          (return (flatten {table "(" l separator o separator r ")"}))))))
+
+  ;;; returns a function to generate generic binary operators
+  (= (local unary-op) ; (str?): ((list form, num): table num (atom | any))
+     (function [separator operator]
+      (= separator (or separator " "))
+      (return
+        (function [form depth]
+          (= (local o r)
+             (or operator (list-head form))
+             (gen-expression (list-head (list-tail form)) depth))
+          (if [(not (is-atom r))
+               (= r (flatten {table "(" r ")"}))])
+          (return (flatten {table o separator r}))))))
+
+  ;; generator aggregators
+  (local expressions statements tables sets)
+
   ;; generator functions
   (local gen-many gen-identity gen-expression gen-statement gen-table-item
          gen-add gen-sub gen-mul gen-div gen-mod gen-pow gen-concat
@@ -644,9 +686,6 @@
          gen-do gen-if gen-return
          gen-while gen-repeat gen-for gen-for-in gen-break
          gen-label gen-goto)
-
-  ;; generator aggregators
-  (local expressions statements tables sets)
 
   ;;; tries to generate each element of the list with given generator
   (= gen-many ; (generator, str, list form, num): table num (atom | any)
@@ -676,8 +715,6 @@
   ;;; generates a statement
   (= gen-statement ; (list form, num): table num (atom | any)
      (function [form depth]
-      (puts form)
-      (print "-")
       (= (local head) (atom-content (list-head form)))
       (= (local gen) (at statements head))
       (if [gen (return (gen form depth))])
@@ -692,51 +729,27 @@
       (if [gen (return (gen form depth))])
       (return (gen-call form depth))))
 
-  ;;; returns a function to generate generic binary operators
-  (= (local gen-gen-bop) ; (str?): ((list form, num): table num (atom | any))
-     (function [operator separator]
-      (= separator (or separator " "))
-      (return
-        (function [form depth]
-          (= (local l o r)
-             (gen-expression (list-head (list-tail form)) depth)
-             (or operator (list-head form))
-             (gen-expression (list-head (list-tail (list-tail form))) depth))
-          (return (flatten {table "(" l separator o separator r ")"}))))))
-
-  ;;; returns a function to generate generic binary operators
-  (= (local gen-gen-uop) ; (str?): ((list form, num): table num (atom | any))
-     (function [separator operator]
-      (= separator (or separator " "))
-      (return
-        (function [form depth]
-          (= (local o r)
-             (or operator (list-head form))
-             (gen-expression (list-head (list-tail form)) depth))
-          (if [(not (is-atom r))
-               (= r (flatten {table "(" r ")"}))])
-          (return (flatten {table o separator r}))))))
-
   ;;; operatiors
-  (= gen-add (gen-gen-bop))
-  (= gen-sub (gen-gen-bop))
-  (= gen-mul (gen-gen-bop))
-  (= gen-div (gen-gen-bop))
-  (= gen-mod (gen-gen-bop))
-  (= gen-pow (gen-gen-bop))
-  (= gen-concat (gen-gen-bop))
-  (= gen-eq (gen-gen-bop "=="))
-  (= gen-neq (gen-gen-bop "~="))
-  (= gen-lt (gen-gen-bop))
-  (= gen-le (gen-gen-bop))
-  (= gen-gt (gen-gen-bop))
-  (= gen-ge (gen-gen-bop))
-  (= gen-and (gen-gen-bop))
-  (= gen-or (gen-gen-bop))
-  (= gen-not (gen-gen-uop " "))
-  (= gen-unm (gen-gen-uop ""))
-  (= gen-len (gen-gen-uop ""))
+  (= gen-add (binary-op))
+  (= gen-sub (binary-op))
+  (= gen-mul (binary-op))
+  (= gen-div (binary-op))
+  (= gen-mod (binary-op))
+  (= gen-pow (binary-op))
+  (= gen-concat (binary-op))
+  (= gen-eq (binary-op "=="))
+  (= gen-neq (binary-op "~="))
+  (= gen-lt (binary-op))
+  (= gen-le (binary-op))
+  (= gen-gt (binary-op))
+  (= gen-ge (binary-op))
+  (= gen-and (binary-op))
+  (= gen-or (binary-op))
+  (= gen-not (unary-op " "))
+  (= gen-unm (unary-op ""))
+  (= gen-len (unary-op ""))
 
+  ;;; wraps expression in parens
   (= gen-parens
      (function [form depth]
       (= (local x) (gen-expression (list-head (list-tail form)) depth))
@@ -783,7 +796,7 @@
   ;;; creates a function
   (= gen-function ; (list form, num): table num (atom | any)
      (function [form depth]
-      (= (local p b)
+      (= (local p b i1 i2)
          (gen-many gen-identity
                    ", "
                    (list-head (list-tail form))
@@ -791,8 +804,10 @@
          (gen-many gen-statement
                    "\n"
                    (list-tail (list-tail form))
-                   depth))
-      (return (flatten {table "function(" p ")\n" b "\nend"}))))
+                   depth)
+         (indent (+ depth 1))
+         (indent depth))
+      (return (flatten {table "function(" p ")\n" i1 b "\n" i2 "end"}))))
 
   ;;; plain function calls
   (= gen-call ; (list form, num): table num (atom | any)
@@ -810,6 +825,61 @@
           (list-head (list-tail (list-tail form)))
           (gen-many gen-expression ", " (list-tail (list-tail form)) depth))
        (return (flatten {table x ":" m "(" p ")"}))))
+
+  ;;;
+  (= gen-local ; (list form, num): table num (atom | any)
+     (function [form depth]
+       (= (local v)
+          (gen-many gen-identity ", " (list-tail form) depth))
+       (return (flatten {table "local " v}))))
+
+  ;;;
+  (= gen-set ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-comma ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-do ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-if ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-return ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-while ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-repeat ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-for ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-for-in ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-break ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-label ; (list form, num): table num (atom | any)
+     (function [form depth]))
+
+  ;;;
+  (= gen-goto ; (list form, num): table num (atom | any)
+     (function [form depth]))
 
   ;; valid expressions
   (= expressions
@@ -847,11 +917,13 @@
 
   (= codegen
     (function [form depth]
-     (= (local got) (gen-statement form (or depth 1)))
-     (= (local out) {table})
+     (= (local got) (gen-statement form (or depth 0)))
+     (= (local out len) {table} 1)
      (for-in [n item] [(ipairs got)]
        (if [(is-atom item) (= (at out n) (atom-to-string item))]
-           [else (= (at out n) (tostring item))]))
+           [else (= (at out n) (tostring item))])
+       (= len n))
+     (= (at out (+ len 1)) "\n")
      (return (table-concat out "")))))
 
 ;;; returns a macros table with default macros
@@ -935,6 +1007,8 @@
       (output (codegen form))
       (label skip))))
 
-(= (local str) "(print (function [a b c] (print a)))")
+(= (local str) "(print (function [a b c] (print a)))(local a b c)")
+(= (local print2) (function [str] ((. (. io stdout) write) (. io stdout) str)))
 (= (local code) (code-from-string str))
-(compile-code code print)
+(compile-code code print2)
+(print2 "\n")
