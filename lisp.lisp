@@ -640,7 +640,7 @@
        (function [depth]
         (if [(< depth 0) (= depth 0)])
         (= (local got) (at store depth))
-        (if [got (return depth)])
+        (if [got (return got)])
         (= got (string-rep "   " depth))
         (= (at store depth) got)
         (return got))))
@@ -671,10 +671,11 @@
           (return (flatten {table o separator r}))))))
 
   ;; generator aggregators
-  (local expressions statements tables sets)
+  (local expressions statements tables assigns)
 
   ;; generator functions
-  (local gen-many gen-identity gen-expression gen-statement gen-table-item
+  (local gen-many gen-identity
+         gen-expression gen-statement gen-table-item gen-assign
          gen-add gen-sub gen-mul gen-div gen-mod gen-pow gen-concat
          gen-eq gen-neq gen-lt gen-le gen-gt gen-ge
          gen-and gen-or gen-not
@@ -728,6 +729,15 @@
       (= (local gen) (at tables head))
       (if [gen (return (gen form depth))])
       (return (gen-call form depth))))
+
+  ;;; generates an table item
+  (= gen-assign ; (list form, num): table num (atom | any)
+     (function [form depth]
+      (if [(not (is-list form)) (return form)])
+      (= (local head) (atom-content (list-head form)))
+      (= (local gen) (at assigns head))
+      (if [gen (return (gen form depth))])
+      (error "WTF")))
 
   ;;; operatiors
   (= gen-add (binary-op))
@@ -826,60 +836,131 @@
           (gen-many gen-expression ", " (list-tail (list-tail form)) depth))
        (return (flatten {table x ":" m "(" p ")"}))))
 
-  ;;;
+  ;;; assigns value
+  (= gen-set ; (list form, num): table num (atom | any)
+     (function [form depth]
+       (= (local x v)
+          (gen-assign (list-head (list-tail form)) depth)
+          (gen-many gen-expression ", " (list-tail (list-tail form)) depth))
+       (return (flatten {table x " = " v}))))
+
+  ;;; declare local variables, compatible with set
   (= gen-local ; (list form, num): table num (atom | any)
      (function [form depth]
-       (= (local v)
-          (gen-many gen-identity ", " (list-tail form) depth))
+       (= (local v) (gen-many gen-identity ", " (list-tail form) depth))
        (return (flatten {table "local " v}))))
 
-  ;;;
-  (= gen-set ; (list form, num): table num (atom | any)
-     (function [form depth]))
-
-  ;;;
+  ;;; used by set to assign multiple values
   (= gen-comma ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+       (return (flatten (gen-many gen-identity ", " (list-tail form) depth)))))
 
-  ;;;
+  ;;; creates a new lexical block, useful for let
   (= gen-do ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local b i1 i2)
+         (gen-many gen-statement
+                   {table "\n" (indent (+ depth 1))}
+                   (list-tail form)
+                   (+ depth 1))
+         (indent (+ depth 1))
+         (indent depth))
+      (return (flatten {table "do\n" i1 b "\n" i2 "end"}))))
 
   ;;;
   (= gen-if ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (return {table ""})))
+      ; (if [cond ])
 
-  ;;;
+
+  ;;; returns value
   (= gen-return ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local p) (gen-many gen-expression "," (list-tail form) depth))
+      (return (flatten {table "return " p}))))
 
-  ;;;
+  ;;; creates a while loop
   (= gen-while ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local x b i1 i2)
+         (gen-expression (list-head (list-tail form)) depth)
+         (gen-many gen-statement
+                   {table "\n" (indent (+ depth 1))}
+                   (list-tail (list-tail form))
+                   (+ depth 1))
+         (indent (+ depth 1))
+         (indent depth))
+      (return (flatten {table "while " x " do\n" i1 b "\n" i2 "end"}))))
 
   ;;;
   (= gen-repeat ; (list form, num): table num (atom | any)
      (function [form depth]))
 
-  ;;;
+  ;;; for loop
   (= gen-for ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local opts) (list-head (list-tail form)))
+      (= (local iter walk) (list-head opts) (list-tail opts))
+      (= (local step)  (list-head (list-tail walk)))
+      (= (local i x t b i1 i2)
+         (list-head iter)
+         (gen-expression (list-head (list-tail iter)) depth)
+         (gen-expression (list-head walk) depth)
+         (gen-many gen-statement
+                   {table "\n" (indent (+ depth 1))}
+                   (list-tail (list-tail form))
+                   (+ depth 1))
+         (indent (+ depth 1))
+         (indent depth))
+      (if [step
+           (= (local s)
+              (gen-expression step depth))
+           (return
+            (flatten
+              {table "for " i "=" x "," t "," s " do\n" i1 b "\n" i2 "end"}))])
+      (return
+        (flatten
+          {table "for " i "=" x "," t " do\n" i1 b "\n" i2 "end"}))))
 
-  ;;;
+  ;;; for in loop
   (= gen-for-in ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local v x b  i1 i2)
+        (gen-many gen-identity
+                  ","
+                   (list-head (list-tail form))
+                   depth)
+        (gen-many gen-expression
+                  ","
+                  (list-head (list-tail (list-tail form)))
+                  depth)
+        (gen-many gen-statement
+                  {table "\n" (indent (+ depth 1))}
+                  (list-tail (list-tail (list-tail form)))
+                  (+ depth 1))
+        (indent (+ depth 1))
+        (indent depth))
+      (return
+        (flatten
+          {table "for " v " in " x " do\n" i1 b "\n" i2 "end"}))))
 
-  ;;;
+  ;;; breaks loop
   (= gen-break ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (return (list-head form))))
 
-  ;;;
+  ;;; creates a goto label
   (= gen-label ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local n) (list-head (list-tail form)))
+      (return {table "::" n "::"})))
 
-  ;;;
+  ;;; goto statement
   (= gen-goto ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local n) (list-head (list-tail form)))
+      (return {table "goto" n})))
 
   ;; valid expressions
   (= expressions
@@ -912,8 +993,11 @@
             (kv ":" gen-invoke) (kv "kv" gen-kv) (kv "xkv" gen-xkv)})
 
   ;; set specific forms
-  (= sets
-     {table (kv "local" gen-local) (kv "many" gen-comma)})
+  (= assigns
+     {table (kv "local" gen-local)
+            (kv "many" gen-comma)
+            (kv "." gen-dot)
+            (kv "at" gen-at)})
 
   (= codegen
     (function [form depth]
@@ -1007,7 +1091,7 @@
       (output (codegen form))
       (label skip))))
 
-(= (local str) "(print (function [a b c] (print a)))(local a b c)")
+(= (local str) "(if [true (print 1)][false (print 2)][else (print 3)])")
 (= (local print2) (function [str] ((. (. io stdout) write) (. io stdout) str)))
 (= (local code) (code-from-string str))
 (compile-code code print2)
