@@ -1,14 +1,15 @@
 ;;;; high priority:
 ;;;;
 ;;;; - add codegen
-;;;; - add transforms support
-;;;;   - symbol/symbol support
 ;;;; - add error reporting
+;;;; - add sourcemapped error reporting for runtime
 ;;;; - finish bootstrapping
 ;;;; - rename some special forms
 ;;;;   - = -> set
 ;;;;   - == -> =
 ;;;;   - ~= -> !=
+;;;; - rewrite codegen with less forms and less hacky code
+;;;; - add transforms support
 ;;;; - add compatibility for luajit 5.1
 ;;;;
 ;;;; medium priority:
@@ -20,7 +21,6 @@
 ;;;;
 ;;;; low priority:
 ;;;;
-;;;; - add sourcemapped error reporting for runtime
 ;;;; - add a runtime library tranform
 ;;;;
 ;;;; it will probably need 2kloc :T
@@ -867,12 +867,49 @@
          (indent depth))
       (return (flatten {table "do\n" i1 b "\n" i2 "end"}))))
 
-  ;;;
+  ;;; if form
   (= gen-if ; (list form, num): table num (atom | any)
      (function [form depth]
-      (return {table ""})))
-      ; (if [cond ])
-
+      (= (local first-cond rest)
+         (list-head (list-tail form)) (list-tail (list-tail form)))
+      (= (local x b i1 i2)
+         (gen-expression (list-head first-cond) depth)
+         (gen-many gen-statement
+                   {table "\n" (indent (+ depth 1))}
+                   (list-tail first-cond)
+                   (+ depth 1))
+         (indent (+ depth 1))
+         (indent depth))
+      (= (local out idx)
+         {table "if " x " then\n" i1 b}
+         5)
+      (for-in [tail head] [(list-pairs rest)]
+        (= (local x b)
+           (gen-expression (list-head head) depth)
+           (gen-many gen-statement
+                     {table "\n" (indent (+ depth 1))}
+                     (list-tail head)
+                     (+ depth 1)))
+        (if [(and (list-is-empty tail)
+                  (and (atom-is-symbol x) (== (atom-content x) "else")))
+             (= (at out (+ idx 1)) "\n")
+             (= (at out (+ idx 2)) i2)
+             (= (at out (+ idx 3)) "else\n")
+             (= (at out (+ idx 4)) i1)
+             (= idx (+ idx 5))]
+            [else
+             (= (at out (+ idx 1)) "\n")
+             (= (at out (+ idx 2)) i2)
+             (= (at out (+ idx 3)) "elseif ")
+             (= (at out (+ idx 4)) x)
+             (= (at out (+ idx 5)) " then\n")
+             (= (at out (+ idx 6)) i1)
+             (= idx (+ idx 7))])
+        (= (at out idx) b))
+      (= (at out (+ idx 1)) "\n")
+      (= (at out (+ idx 2)) i2)
+      (= (at out (+ idx 3)) "end")
+      (return (flatten out))))
 
   ;;; returns value
   (= gen-return ; (list form, num): table num (atom | any)
@@ -893,9 +930,19 @@
          (indent depth))
       (return (flatten {table "while " x " do\n" i1 b "\n" i2 "end"}))))
 
-  ;;;
+  ;;; repeat loop
   (= gen-repeat ; (list form, num): table num (atom | any)
-     (function [form depth]))
+     (function [form depth]
+      (= (local till body) (list-split (list-reverse (list-tail form)) 1))
+      (= (local t b i1 i2)
+         (gen-expression (list-head (list-tail (list-reverse till))) depth)
+         (gen-many gen-statement
+                   {table "\n" (indent (+ depth 1))}
+                   (list-reverse body)
+                   (+ depth 1))
+         (indent (+ depth 1))
+         (indent depth))
+      (return (flatten {table "repeat\n" i1 b "\n" i2 "until " t}))))
 
   ;;; for loop
   (= gen-for ; (list form, num): table num (atom | any)
@@ -1091,7 +1138,6 @@
       (output (codegen form))
       (label skip))))
 
-(= (local str) "(if [true (print 1)][false (print 2)][else (print 3)])")
 (= (local print2) (function [str] ((. (. io stdout) write) (. io stdout) str)))
 (= (local code) (code-from-string str))
 (compile-code code print2)
