@@ -95,6 +95,31 @@
        atom-position ; (atom a): num, num
        atom-to-string) ; (atom a): str
 (do
+  ;;; converts string into a valid identifier, fails when the identifier is
+  ;;; prefixed with `v4r_'
+  (local to-identifier) ; (str): str
+  (do
+    (= (local capitalize)
+      (function [str] (return (string-gsub str "^%l" string-upper))))
+
+    (= (local pascalize)
+      (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
+
+    (= (local escape-char)
+      (function [char]
+        (return (string-lower (string-format "0x%X_" (string-byte char))))))
+
+    (= to-identifier
+      (function [str]
+        (if [(string-find str "v4r_") (return false "is prefixed")])
+        (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
+        (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
+        (= str (string-gsub str "^%-" escape-char))
+        (= str (pascalize str))
+        (= str (string-gsub str "[^_%w]" escape-char))
+        (= str (.. "v4r_" str))
+        (return true str))))
+
   ;; stores available atoms
   (= (local is-store) (setmetatable {table} {table (kv __mode "k")}))
 
@@ -148,7 +173,9 @@
   (= atom-to-string
      (function [self]
       (= (local content) (atom-content self))
-      (if [(atom-is-symbol self) (return content)]
+      (if [(atom-is-symbol self)
+           (if [(== content "...") (return content)]
+               [else (return (select 2 (to-identifier content)))])]
           [(== (type content) "string") (return (.. "\"" content "\""))]
           [else (return (tostring content))]))))
 
@@ -592,31 +619,6 @@
 ;;; perform validation
 (local codegen) ; (form, num?): str
 (do
-  ;;; converts string into a valid identifier, fails when the identifier is
-  ;;; prefixed with `v4r_'
-  (local to-identifier) ; (str): str
-  (do
-    (= (local capitalize)
-      (function [str] (return (string-gsub str "^%l" string-upper))))
-
-    (= (local pascalize)
-      (function [str] (return (string-gsub str "%-(%w+)" capitalize))))
-
-    (= (local escape-char)
-      (function [char]
-        (return (string-lower (string-format "0x%X_" (string-byte char))))))
-
-    (= to-identifier
-      (function [str]
-        (if [(string-find str "v4r_") (return false "is prefixed")])
-        (if [(string-find str "^[_%a][%-_%w]*$") (= str (pascalize str))])
-        (if [(string-find str "^[_%a][%_%w]*$") (return true str)])
-        (= str (string-gsub str "^%-" escape-char))
-        (= str (pascalize str))
-        (= str (string-gsub str "[^_%w]" escape-char))
-        (= str (.. "v4r_" str))
-        (return true str))))
-
   ;;; flattens a table one level, also useful for shallow copies
   (= (local flatten) ; (table num (v | table num v)): table num v
      (function [tbl]
@@ -645,6 +647,24 @@
         (= (at store depth) got)
         (return got))))
 
+  ;; generator aggregators
+  (local expressions statements tables assigns)
+
+  ;; generator functions
+  (local gen-many gen-identity
+         gen-expression gen-statement gen-table-item gen-assign
+         gen-add gen-sub gen-mul gen-div gen-mod gen-pow gen-concat
+         gen-eq gen-neq gen-lt gen-le gen-gt gen-ge
+         gen-and gen-or gen-not
+         gen-unm gen-len
+         gen-parens
+         gen-table gen-kv gen-xkv gen-dot gen-at
+         gen-function gen-call gen-invoke
+         gen-local gen-set gen-comma
+         gen-do gen-if gen-return
+         gen-while gen-repeat gen-for gen-for-in gen-break
+         gen-label gen-goto)
+
   ;;; returns a function to generate generic binary operators
   (= (local binary-op) ; (str?): ((list form, num): table num (atom | any))
      (function [operator separator]
@@ -669,24 +689,6 @@
           (if [(not (is-atom r))
                (= r (flatten {table "(" r ")"}))])
           (return (flatten {table o separator r}))))))
-
-  ;; generator aggregators
-  (local expressions statements tables assigns)
-
-  ;; generator functions
-  (local gen-many gen-identity
-         gen-expression gen-statement gen-table-item gen-assign
-         gen-add gen-sub gen-mul gen-div gen-mod gen-pow gen-concat
-         gen-eq gen-neq gen-lt gen-le gen-gt gen-ge
-         gen-and gen-or gen-not
-         gen-unm gen-len
-         gen-parens
-         gen-table gen-kv gen-xkv gen-dot gen-at
-         gen-function gen-call gen-invoke
-         gen-local gen-set gen-comma
-         gen-do gen-if gen-return
-         gen-while gen-repeat gen-for gen-for-in gen-break
-         gen-label gen-goto)
 
   ;;; tries to generate each element of the list with given generator
   (= gen-many ; (generator, str, list form, num): table num (atom | any)
@@ -812,7 +814,7 @@
                    (list-head (list-tail form))
                    depth)
          (gen-many gen-statement
-                   "\n"
+                   {table "\n" (indent (+ depth 1))}
                    (list-tail (list-tail form))
                    depth)
          (indent (+ depth 1))
@@ -1139,6 +1141,6 @@
       (label skip))))
 
 (= (local print2) (function [str] ((. (. io stdout) write) (. io stdout) str)))
-(= (local code) (code-from-string str))
+(= (local code) (code-from-file "lisp.lisp"))
 (compile-code code print2)
 (print2 "\n")
